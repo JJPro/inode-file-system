@@ -55,6 +55,7 @@ static void* vfs_mount(struct fuse_conn_info *conn) {
 
   /* 3600: YOU SHOULD ADD CODE HERE TO CHECK THE CONSISTENCY OF YOUR DISK
            AND LOAD ANY DATA STRUCTURES INTO MEMORY */
+  
 
   return NULL;
 }
