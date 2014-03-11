@@ -35,6 +35,7 @@ format_disk(int size) /* size: total number of blocks on disk */
 	entry_t entry;
 	dirent_t root_dirent;
 	free_t free_b;
+	inode_t inode;
 
 	min_required_blocks = 1 			/* vcb */
 						+ I_TABLE_SIZE  /* inode table */
@@ -164,40 +165,45 @@ int
 find_ino(const char *path)
 		/* Returns inode number Or -1 on error */
 {
-	char m_path[strlen(path)+1];
-	int tokenc;
+	char 		m_path[strlen(path)+1];   /* mutable string for path2tokens() */
+	int 		tokenc;
 	char 	    **tokens;
+	char		**tokenp;				  /* for travese tokens */
 	char		*token;
 	inode_t  	*inodep;
-	dirent_t 	*dirp;
-	entry_t  	*entp;
-	indirect_t 	indirect;
-	insert_t 		insert;
+	dirent_t 	dir;
+	entry_t  	ent;
+	// indirect_t 	indirect;
+	insert_t 	insert;
 
 	strcpy(m_path, path);
 
 	inodep = retrieve_root();
-	tokenc = path2tokens(m_path, tokens);
+	tokenc = path2tokens(m_path, &tokens);
 	tokenp = tokens;
-	for (int i=0; 
+
+	int i;
+	for (i=0; 
 		( i<(tokenc-1) && I_ISDIR(inodep->i_type) ); 
 		i++, tokenp++)
 	{
-		if ( ( insert=search_entry_in_dir(*tokenp, inodep, dirp, entp) ) < 0 )
+		token = *tokenp;
+		if ( ( insert=search_entry(token, inodep, &dir, &ent) ) < 0 )
 			return -1;
-		if (!(inodep = retrieve_inode(entp->et_ino)))
+		if (!(inodep = retrieve_inode(ent.et_ino)))
 			return -1;
 	}
 	if (i != (tokenc-1))
 		return -1;
-	if ( (insert=search_entry_in_dir(*tokenp, inodep, dirp, entp)) < 0 )
+	token = *tokenp;
+	if ( (insert=search_entry(token, inodep, &dir, &ent)) < 0 )
 		return -1;
 
 	for (int i=0; i<tokenc; i++){		/* free tokens */
 		free(tokens+i);
 	}
 
-	return entp->et_ino;
+	return ent.et_ino;
 }
 
 int 
@@ -233,8 +239,11 @@ path2tokens(char* path, char *** tokens)
 }
 
 insert_t
-search_entry_in_dir(char *et_name, inode_t *inodep, dirent_t *dirp, entry_t *entp)
-		/* Returns the insert value Or -1 on error
+search_entry(char *et_name, inode_t *inodep, dirent_t *dirp, entry_t *entp)
+		/* Returns 
+				insert value of the entry position
+				-1 not found
+				-2 on error 
 
 		   et_name is the file/dir name to be search for
 		   inodep  is the pointer to the inode, which is the directory to be searched
@@ -243,7 +252,34 @@ search_entry_in_dir(char *et_name, inode_t *inodep, dirent_t *dirp, entry_t *ent
 		   pointer to dirent_t, where the entry resides, is stored in dirp
 		   pointer to entry_t,  search result, is stored in entp */
 {
+	dirent_t *direntp;
+	entry_t  entry;
+	int total_blocks;
 
+	int insert;
+	int block;
+	int offset;
+
+	total_blocks = inodep->i_blocks;
+	for (int i=0; i<total_blocks; i++){
+		if ( !(direntp = retrieve_dirent(inodep->i_direct[i])) )
+			return -2;
+		for (int j=0; j<8; j++){
+			entry = direntp->d_entries[i];
+			if ( entry.et_ino
+				&& strcmp(entry.et_name, et_name) == 0 )
+			{
+				offset = j;
+				block = inodep->i_direct[i];
+				insert = I_INSERT(block, offset);
+			
+				*dirp = *direntp;
+				*entp = entry;
+				return insert;
+			}
+		}
+	}
+	return -1;
 }
 
 int 

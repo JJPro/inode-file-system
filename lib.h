@@ -78,23 +78,23 @@ typedef struct {
 
 int format_disk(int size);
 
-vcb_t   *retrieve_vcb(); /* return vcb is statically alloced */
-inode_t *retrieve_inode(int inode_num);
-inode_t *retrieve_root();
+vcb_t    *retrieve_vcb(); /* return vcb is statically alloced */
+inode_t  *retrieve_inode(int inode_num);
+inode_t  *retrieve_root();
 dirent_t *retrieve_dirent(int blocknum);
 
-int find_ino(const char* path);
-int path2tokens(char* path, char *** tokens); 
-		/* caller is responsible for freeing memory allocated to tokens */
-insert_t search_entry_in_dir(char* et_name, inode_t *inodep, dirent_t *dirp, entry_t *entp);
-		/* dirp and entp is statically allocated */
+int      find_ino   (const char* path);
+int      path2tokens(char* path, char *** tokens); 
+			/* caller is responsible for freeing memory allocated to tokens */
+insert_t search_entry(char* et_name, inode_t *inodep, dirent_t *dirp, entry_t *entp);
+			/* dirp and entp is statically allocated */
 
 int write_struct(int blocknum, void *structp);
 int read_struct (int blocknum, void *structp);
 
 /*** debugging */
 void debug(const char *format, ...);
-void err(const char *format, ...);
+void err  (const char *format, ...);
 void print_vcb();
 void print_root();
 void print_inode(inode_t *inodep);
