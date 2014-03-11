@@ -44,6 +44,8 @@
 static bool vcb_needs_update  = false;
 static bool root_needs_update = false;
 
+static void vfs_unmount (void *private_data);
+
 /*
  * Initialize filesystem. Read in file system metadata and initialize
  * memory structures. If there are inconsistencies, now would also be
@@ -65,21 +67,18 @@ static void* vfs_mount(struct fuse_conn_info *conn) {
   if (!vcbp) {
     err("Mount Failed\n"
       "Error retrieving vcb");
-    dunconnect();
-    exit(0);
+    vfs_unmount(NULL);
   }
 
   if (vcbp->vb_magic != MAGIC){
     err("Mount Failed\n"
       "This isn't your disk!");
-    dunconnect();
-    exit(0);
+    vfs_unmount(NULL);
   }
 
   if (!(vcbp->vb_clean)){
     err("Data damaged, last umount was not friendly");
-    dunconnect();
-    exit(0);
+    vfs_unmount(NULL);
   }
   vcb_needs_update  = false;
   root_needs_update = false;
@@ -141,6 +140,7 @@ static int vfs_getattr(const char *path, struct stat *stbuf) {
   stbuf->st_blksize = BLOCKSIZE;
 
   /* 3600: YOU MUST UNCOMMENT BELOW AND IMPLEMENT THIS CORRECTLY */
+  debug("       looking for path: %s", path);
   if (strcmp(dirname(m_path), "/") == 0 &&
       strcmp(basename(m_path2), "/") == 0){
     stbuf->st_mode  = 0777 | S_IFDIR;               /* is root */
@@ -168,6 +168,9 @@ static int vfs_getattr(const char *path, struct stat *stbuf) {
   stbuf->st_ctime   = inodep->i_ctime.tv_sec;
   stbuf->st_size    = inodep->i_size;
   stbuf->st_blocks  = inodep->i_blocks;
+
+  debug("       ino for %s is %d", path, ino);
+  print_inode(inodep);                          /* debug */
 
   return 0;
 }
