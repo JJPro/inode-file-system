@@ -30,6 +30,8 @@
 #include <errno.h>
 #include <assert.h>
 #include <sys/statfs.h>
+#include <libgen.h> /* dirname(), 
+                        basename() */
 
 #ifdef HAVE_SETXATTR
 #include <sys/xattr.h>
@@ -37,6 +39,10 @@
 
 #include "3600fs.h"
 #include "disk.h"
+#include "lib.h"
+
+static bool vcb_needs_update  = false;
+static bool root_needs_update = false;
 
 /*
  * Initialize filesystem. Read in file system metadata and initialize
@@ -55,7 +61,32 @@ static void* vfs_mount(struct fuse_conn_info *conn) {
 
   /* 3600: YOU SHOULD ADD CODE HERE TO CHECK THE CONSISTENCY OF YOUR DISK
            AND LOAD ANY DATA STRUCTURES INTO MEMORY */
-  
+  vcb_t *vcbp = retrieve_vcb();
+  if (!vcbp) {
+    err("Mount Failed\n"
+      "Error retrieving vcb");
+    dunconnect();
+    exit(0);
+  }
+
+  if (vcbp->vb_magic != MAGIC){
+    err("Mount Failed\n"
+      "This isn't your disk!");
+    dunconnect();
+    exit(0);
+  }
+
+  if (!(vcbp->vb_clean)){
+    err("Data damaged, last umount was not friendly");
+    dunconnect();
+    exit(0);
+  }
+  vcb_needs_update  = false;
+  root_needs_update = false;
+  vcbp->vb_clean = false;
+
+  if (write_struct(0, vcbp) < 0)
+    err("       ->updating vcb");
 
   return NULL;
 }
@@ -70,6 +101,16 @@ static void vfs_unmount (void *private_data) {
   /* 3600: YOU SHOULD ADD CODE HERE TO MAKE SURE YOUR ON-DISK STRUCTURES
            ARE IN-SYNC BEFORE THE DISK IS UNMOUNTED (ONLY NECESSARY IF YOU
            KEEP DATA CACHED THAT'S NOT ON DISK */
+  inode_t *rootp = retrieve_root();
+  vcb_t   *vcbp  = retrieve_vcb();
+  if (root_needs_update 
+    && ( write_struct(1, rootp) < 0 ) ) {   /* flush root cache */
+    err("       ->updating root");
+  }
+  vcbp->vb_clean = true;
+  if ( write_struct(0, vcbp) < 0 ) {        /* flush vcb cache */
+    err("       ->updating vcb"); 
+  }
 
   // Do not touch or move this code; unconnects the disk
   dunconnect();
@@ -89,27 +130,44 @@ static void vfs_unmount (void *private_data) {
 static int vfs_getattr(const char *path, struct stat *stbuf) {
   fprintf(stderr, "vfs_getattr called\n");
 
+  int ino;
+  inode_t * inodep;
+  char *m_path = (char *)path;    /* mutable pointer */
+  char *m_path2 = (char *)path;   /* mutable pointer */
+
   // Do not mess with this code 
   stbuf->st_nlink = 1; // hard links
   stbuf->st_rdev  = 0;
   stbuf->st_blksize = BLOCKSIZE;
 
   /* 3600: YOU MUST UNCOMMENT BELOW AND IMPLEMENT THIS CORRECTLY */
-  
-  /*
-  if (The path represents the root directory)
-    stbuf->st_mode  = 0777 | S_IFDIR;
-  else 
-    stbuf->st_mode  = <<file mode>> | S_IFREG;
+  if (strcmp(dirname(m_path), "/") == 0 &&
+      strcmp(basename(m_path2), "/") == 0){
+    stbuf->st_mode  = 0777 | S_IFDIR;               /* is root */
+    ino = 1;
+  }
+  else {
+    m_path = (char *)path;    /* reset m_path */
+    if ((ino = find_ino(m_path)) < 0){
+      err("       invalid path");
+      return -1;
+    }
+  }
+  if ( !(inodep = retrieve_inode(ino)) ){
+    err("       retrieve inode failed");
+    return -1;
+  }
+  stbuf->st_mode  = I_ISREG(inodep->i_type) ? 
+                    inodep->i_mode | S_IFREG:
+                    inodep->i_mode | S_IFDIR;
 
-  stbuf->st_uid     = // file uid
-  stbuf->st_gid     = // file gid
-  stbuf->st_atime   = // access time 
-  stbuf->st_mtime   = // modify time
-  stbuf->st_ctime   = // create time
-  stbuf->st_size    = // file size
-  stbuf->st_blocks  = // file size in blocks
-    */
+  stbuf->st_uid     = inodep->i_uid;
+  stbuf->st_gid     = inodep->i_gid;
+  stbuf->st_atime   = inodep->i_atime.tv_sec;
+  stbuf->st_mtime   = inodep->i_mtime.tv_sec;
+  stbuf->st_ctime   = inodep->i_ctime.tv_sec;
+  stbuf->st_size    = inodep->i_size;
+  stbuf->st_blocks  = inodep->i_blocks;
 
   return 0;
 }

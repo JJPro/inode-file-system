@@ -1,8 +1,6 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
-#include <libgen.h> /* dirname(), 
-					   basename() */
 #include <stdarg.h>
 #include <pwd.h>
 #include <grp.h>
@@ -10,8 +8,10 @@
 #include "lib.h"
 #include "disk.h" 	/* BLOCKSIZE */
 
-static vcb_st vcb;
-static inode_st inode;
+static vcb_t vcb;
+static inode_t root;
+static bool vcb_initialized = false;
+static bool root_initialized = false;
 
 
 int 
@@ -32,9 +32,9 @@ format_disk(int size) /* size: total number of blocks on disk */
 	int root_dirent_block;
 	int insert_block, insert_offset;
 	struct timespec now;
-	entry_st entry;
-	dirent_st root_dirent;
-	free_st free_b;
+	entry_t entry;
+	dirent_t root_dirent;
+	free_t free_b;
 
 	min_required_blocks = 1 			/* vcb */
 						+ I_TABLE_SIZE  /* inode table */
@@ -53,6 +53,7 @@ format_disk(int size) /* size: total number of blocks on disk */
 	vcb.vb_clean = true;
 	if (write_struct(0, &vcb) < 0)			/* vcb */
 		return -1;
+	vcb_initialized = true;
 
 	insert_offset = 2;
 	insert_block  = free_starter - 1;
@@ -60,7 +61,7 @@ format_disk(int size) /* size: total number of blocks on disk */
 	if (clock_gettime(CLOCK_REALTIME, &now) == -1)
 		return -1;
 	inode.i_ino  = 1;
-	inode.i_type = I_TD;
+	inode.i_type = I_IFDIR;
 	inode.i_size = 2;
 	inode.i_uid  = getuid();
 	inode.i_gid  = getgid();
@@ -76,8 +77,10 @@ format_disk(int size) /* size: total number of blocks on disk */
 	}
 	inode.i_single = -1;
 	inode.i_double = -1;
-	if (write_struct(1, &inode) < 0)			/* root inode */
+	root = inode;
+	if (write_struct(1, &root) < 0)			/* root inode */
 		return -1;
+	root_initialized = true;
 
 	inode.i_ino = 0;
 	inode.i_direct[0] = -1;
@@ -110,15 +113,137 @@ format_disk(int size) /* size: total number of blocks on disk */
 	return 0;
 }
 
-vcb_st *
+vcb_t *
 retrieve_vcb(){
+	/* Returns pointer to vcb, Or NULL on error */
+	if ( !vcb_initialized ){
+		if ( read_struct(0, &vcb) < 0 )
+			return NULL;
+		vcb_initialized = true;
+	}
 	return &vcb;
 }
 
-inode_st *
+inode_t *
 retrieve_inode(int inode_num){
-	read_struct(inode_num, &inode);
+	/* Returns a pointer to specific inode, Or NULL on error */
+	static inode_t inode;
+	if ( read_struct(inode_num, &inode) < 0 )
+		return NULL;
 	return &inode;
+}
+
+inode_t *
+retrieve_root(){
+	/* Returns a pointer to root inode, Or NULL on error */
+	if (!root_initialized){
+		if ( read_struct(1, &root) < 0 )
+			return NULL;
+		root_initialized = true;
+	}
+	return &root;
+}
+
+dirent_t *
+retrieve_dirent(int blocknum){
+	/* Returns a pointer to struct dirent, Or NULL on error */
+	int min_required_blocks;
+	static dirent_t dirent;
+
+	min_required_blocks = 1 			/* vcb */
+						+ I_TABLE_SIZE  /* inode table */
+						+ 1 			/* root dirent */;
+	if (blocknum < min_required_blocks-1)
+		return NULL;
+	if ( read_struct(blocknum, &dirent) < 0 )
+		return NULL;
+	return &dirent;
+}
+
+int
+find_ino(const char *path)
+		/* Returns inode number Or -1 on error */
+{
+	char m_path[strlen(path)+1];
+	int tokenc;
+	char 	    **tokens;
+	char		*token;
+	inode_t  	*inodep;
+	dirent_t 	*dirp;
+	entry_t  	*entp;
+	indirect_t 	indirect;
+	insert_t 		insert;
+
+	strcpy(m_path, path);
+
+	inodep = retrieve_root();
+	tokenc = path2tokens(m_path, tokens);
+	tokenp = tokens;
+	for (int i=0; 
+		( i<(tokenc-1) && I_ISDIR(inodep->i_type) ); 
+		i++, tokenp++)
+	{
+		if ( ( insert=search_entry_in_dir(*tokenp, inodep, dirp, entp) ) < 0 )
+			return -1;
+		if (!(inodep = retrieve_inode(entp->et_ino)))
+			return -1;
+	}
+	if (i != (tokenc-1))
+		return -1;
+	if ( (insert=search_entry_in_dir(*tokenp, inodep, dirp, entp)) < 0 )
+		return -1;
+
+	for (int i=0; i<tokenc; i++){		/* free tokens */
+		free(tokens+i);
+	}
+
+	return entp->et_ino;
+}
+
+int 
+path2tokens(char* path, char *** tokens)
+		/* e.g : /var/log/syslog -> {"var", "log", "syslog"} 
+		   Warning: the caller is responsible for 
+		            freeing the memory allocated to tokens
+	            							(pointer to strings)
+		   Returns number of tokens Or -1 on error 
+		   path must be absolute */
+{
+	int 	count;
+	int 	depth;
+	char 	*delimiter = "/";
+	char	*word;
+	char	*word_container;
+	char	**tokens_container;
+
+	tokens_container = (char **)calloc(MAX_DIR_DEPTH, sizeof(char **));
+
+	for (word = strtok(path, delimiter), count=0, depth = count;
+		 word && (depth < MAX_DIR_DEPTH);
+		 word = strtok(NULL, delimiter), count++, depth = count)
+	{
+		word_container = (char *)calloc(1, MAX_FILENAME_LENGTH);
+		strcpy(word_container, word);
+		*(tokens_container+count) = word_container;
+	}
+	if (depth >= MAX_DIR_DEPTH)
+		return -1;
+	*tokens = tokens_container;
+	return count;
+}
+
+insert_t
+search_entry_in_dir(char *et_name, inode_t *inodep, dirent_t *dirp, entry_t *entp)
+		/* Returns the insert value Or -1 on error
+
+		   et_name is the file/dir name to be search for
+		   inodep  is the pointer to the inode, which is the directory to be searched
+		   			  the inode_t inodep refers to must be a directory
+
+		   pointer to dirent_t, where the entry resides, is stored in dirp
+		   pointer to entry_t,  search result, is stored in entp */
+{
+
 }
 
 int 
@@ -165,29 +290,39 @@ err(const char* format, ...){
 
 void
 print_vcb(){
-	read_struct(0, &vcb);
-	debug("print_vcb:");
-	debug("    magic: %d", vcb.vb_magic);
-	debug("     root: %d", vcb.vb_root);
-	debug("     free: %d", vcb.vb_free);
+	if ( read_struct(0, &vcb) < 0) {
+		err("print_vcb()->read_struct");
+		return;
+	}
+	vcb_initialized = true;
+	debug("print_vcb:\n"
+		  "           magic: %d\n"
+		  "            root: %d\n"
+		  "            free: %d"
+		  , vcb.vb_magic, vcb.vb_root, vcb.vb_free);
 }
 
 void 
 print_root(){
  	debug("print_root:");
-	inode_st root;
- 	read_struct(1, &root);
+	inode_t root;
+ 	if ( read_struct(1, &root) < 0 ) {
+ 		err("print_root()->read_struct");
+ 		return;
+ 	}
+ 	root_initialized = true;
  	print_inode(&root);
 }
 
 void
-print_inode(inode_st *ip){
+print_inode(inode_t *ip){
  	char *username  = getpwuid(ip->i_uid)->pw_name;
  	char *groupname = getgrgid(ip->i_gid)->gr_name;
 
- 	debug("    inode: %d", ip->i_ino);
- 	debug("     size: %d", ip->i_size);
- 	debug("     user: %s", username);
- 	debug("    group: %s", groupname);
- 	debug("     mode: 0%o", (int)ip->i_mode);
+ 	debug("    inode: %d\n"
+ 		  "            size: %d\n"
+ 		  "            user: %s\n"
+ 		  "           group: %s\n"
+ 		  "            mode: 0%o"
+ 		  , ip->i_ino, ip->i_size, username, groupname, (int)ip->i_mode);
 }
