@@ -4,9 +4,10 @@
 #include <stdarg.h>
 #include <pwd.h>
 #include <grp.h>
+#include <sys/stat.h>  	/* S_IFREG, S_IFDIR */
 
 #include "lib.h"
-#include "disk.h" 	/* BLOCKSIZE */
+#include "disk.h" 		/* BLOCKSIZE */
 
 static vcb_t vcb;
 static inode_t root;
@@ -62,7 +63,7 @@ format_disk(int size) /* size: total number of blocks on disk */
 	if (clock_gettime(CLOCK_REALTIME, &now) == -1)
 		return -1;
 	inode.i_ino  = 1;
-	inode.i_type = I_IFDIR;
+	inode.i_type = S_IFDIR;
 	inode.i_size = 2;
 	inode.i_uid  = getuid();
 	inode.i_gid  = getgid();
@@ -146,8 +147,9 @@ retrieve_root(){
 }
 
 dirent_t *
-retrieve_dirent(int blocknum){
+retrieve_dirent(int blocknum)
 	/* Returns a pointer to struct dirent, Or NULL on error */
+{
 	int min_required_blocks;
 	static dirent_t dirent;
 
@@ -161,10 +163,57 @@ retrieve_dirent(int blocknum){
 	return &dirent;
 }
 
+entry_t *
+step_dir(inode_t *dp)
+		/* Returns 
+				pointer to next entry in directory 
+				NULL on no more entry
+				NULL on error
+		   Description: 
+		   		<dp> must be provided on first call.
+		   		pass <dp> as NULL on subsequent calls for the same directory.
+		   		Returns the first entry in directory 	  if <dp> is given
+		   		Returns the next  entry in same directory if <dp> is NULL */
+{
+	static int 			block_index;
+	static int 			block;
+	static int 			offset;
+	static dirent_t 	*dirbuf;
+	static entry_t 		entry;
+
+	memset(&entry , 0, sizeof(entry_t ));
+	if (dp) {
+		memset(&dirbuf, 0, sizeof(dirent_t));
+		block_index = 0;
+		block 		= 0;
+		offset 		= 0;
+	}
+
+	do {
+		if (offset == 8 || dp){ 				/* cache new/next dirent_t data in dirbuf */
+			if ( offset == 8 )
+				block_index++;
+			block = dp->i_direct[block_index];
+			offset = 0;
+
+			dirbuf = retrieve_dirent(block);
+		}
+
+		entry = dirbuf->d_entries[offset];
+		offset++;
+	}
+	while (entry.et_ino == 0);
+
+	return &entry;
+}
+
 int
 find_ino(const char *path)
 		/* Returns inode number Or -1 on error */
 {
+	debug("find_ino(): \n"
+		  "       looking for ino of path: %s", path);
+
 	char 		m_path[strlen(path)+1];   /* mutable string for path2tokens() */
 	int 		tokenc;
 	char 	    **tokens;
@@ -200,8 +249,13 @@ find_ino(const char *path)
 		return -1;
 
 	for (int i=0; i<tokenc; i++){		/* free tokens */
-		free(tokens+i);
+		free(*(tokens+i));
 	}
+	free(tokens);
+
+	debug("find_ino() : \n"
+		  "       ino : %d\n"
+		  "       path: %s", ent.et_ino, path);
 
 	return ent.et_ino;
 }

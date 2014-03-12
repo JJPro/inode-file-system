@@ -7,9 +7,6 @@
 #define MAGIC 8876318
 #define I_TABLE_SIZE 200
 
-#define I_IFREG 0 				/* file type */
-#define I_IFDIR 1				/* directory type */
-
 #define MAX_FILENAME_LENGTH 60	/* see declaration of entry_t for why it must be this value */
 #define MAX_DIR_DEPTH		10
 
@@ -18,8 +15,8 @@
 #define I_OFFSET(x) 	( (int) ( (x) & (long)7 ) )		/* insert entry offset */
 #define I_INSERT(x, y)	(insert_t)( ( (long)(x) << 3 ) + (y) )	/* generate insert value */
 
-#define I_ISREG(t) 		( (t) == I_IFREG )	/* is file? */
-#define I_ISDIR(t)		( (t) == I_IFDIR )	/* is directory? */
+#define I_ISREG(t) 		( (t) == S_IFREG )	/* is file? */
+#define I_ISDIR(t)		( (t) == S_IFDIR )	/* is directory? */
 
 typedef long insert_t;
 
@@ -82,6 +79,8 @@ vcb_t    *retrieve_vcb(); /* return vcb is statically alloced */
 inode_t  *retrieve_inode(int inode_num);
 inode_t  *retrieve_root();
 dirent_t *retrieve_dirent(int blocknum);
+
+entry_t  *step_dir(inode_t *dp);
 
 int      find_ino   (const char* path);
 int      path2tokens(char* path, char *** tokens); 

@@ -149,7 +149,7 @@ static int vfs_getattr(const char *path, struct stat *stbuf) {
   else {
     m_path = (char *)path;    /* reset m_path */
     if ((ino = find_ino(m_path)) < 0){
-      err("       invalid path");
+      debug("       invalid path");
       return -1;
     }
   }
@@ -170,7 +170,17 @@ static int vfs_getattr(const char *path, struct stat *stbuf) {
   stbuf->st_blocks  = inodep->i_blocks;
 
   debug("       ino for %s is %d", path, ino);
-  print_inode(inodep);                          /* debug */
+  debug("       information about it: \n"
+        "              uid: %d\n"
+        "              gid: %d\n"
+        "              atime: %s\n"
+        "              size: %d\n"
+        "              blocks: %d",
+        (int)stbuf->st_uid, 
+        (int)stbuf->st_gid,
+        ctime(&(stbuf->st_atime)),
+        (int)stbuf->st_size,
+        (int)stbuf->st_blocks);                     
 
   return 0;
 }
@@ -217,7 +227,39 @@ static int vfs_mkdir(const char *path, mode_t mode) {
 static int vfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
                        off_t offset, struct fuse_file_info *fi)
 {
+    debug("vfs_readdir()");
+    int     ino;
+    inode_t *dp;
+    inode_t *inodep;
+    entry_t *ep;
 
+    struct stat st;
+
+    if ( ( ino = find_ino(path) ) < 0 ) {
+        debug("       inode not exist for path %s", path);
+        return -errno;
+    }
+    if ( !( dp = retrieve_inode(ino) ) ) {
+        debug("       retrieve inode failed");
+        return -errno;
+    }
+    ep = step_dir(dp);
+    if ( !(inodep = retrieve_inode(ep->et_ino)) ) return -errno;
+    st.st_ino = inodep->i_ino;
+    st.st_mode = inodep->i_type | inodep->i_mode;
+    if (filler(buf, ep->et_name, &st, 0))
+        return 0;
+
+    while ((ep = step_dir(NULL))) {
+        debug("       current entry inode: %d", ep->et_ino);
+        memset(&st, 0, sizeof(st));
+        if ( !(inodep = retrieve_inode(ep->et_ino)) ) return -errno;
+
+        st.st_ino = inodep->i_ino;
+        st.st_mode = inodep->i_type | inodep->i_mode;
+        if (filler(buf, ep->et_name, &st, 0))
+            break;
+    }
     return 0;
 }
 
