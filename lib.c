@@ -6,11 +6,12 @@
 #include <grp.h>
 #include <sys/stat.h>  	/* S_IFREG, S_IFDIR */
 
+#include "disk.h" 				/* BLOCKSIZE */
 #include "lib.h"
 
-static vcb_t vcb;
-static inode_t root;
-static valid_t valid;
+static vcb_t 	vcb;
+static inode_t 	root;
+static valid_t 	valid;
 static bool vcb_initialized = false;
 static bool root_initialized = false;
 
@@ -139,15 +140,6 @@ retrieve_vcb(){
 }
 
 inode_t *
-retrieve_inode(int inode_num){
-	/* Returns a pointer to specific inode, Or NULL on error */
-	static inode_t inode;
-	if ( read_struct(inode_num, &inode) < 0 )
-		return NULL;
-	return &inode;
-}
-
-inode_t *
 retrieve_root(){
 	/* Returns a pointer to root inode, Or NULL on error */
 	if (!root_initialized){
@@ -158,43 +150,6 @@ retrieve_root(){
 	return &root;
 }
 
-dirent_t *
-retrieve_dirent(int blocknum)
-	/* Returns a pointer to struct dirent, Or NULL on error */
-{
-	int min_required_blocks;
-	static dirent_t dirent;
-
-	min_required_blocks = 1 			/* vcb */
-						+ I_TABLE_SIZE  /* inode table */
-						+ 1 			/* root dirent */;
-	if (blocknum < min_required_blocks-1)
-		return NULL;
-	if ( read_struct(blocknum, &dirent) < 0 )
-		return NULL;
-	return &dirent;
-}
-
-free_t *
-retrieve_free()
-	/* Returns pointer to the free block, 
-		Or NULL on no space or error */
-{
-	static free_t freeb;
-	vcb_t         *vbp;
-	int 		  block;
-
-	vbp = retrieve_vcb();
-	if (!vbp)
-		return NULL;
-	block = vbp->vb_free;
-	if (block < 0)
-		return NULL;
-	if ( read_struct(block, &freeb) < 0 )
-		return NULL;
-	return &freeb;
-}
-
 valid_t  *
 retrieve_valid(){
 	static bool cached = false;
@@ -202,6 +157,85 @@ retrieve_valid(){
 	   && (read_struct(vcb.vb_valid, &valid) < 0))
 		return NULL;
 	return &valid;
+}
+
+inode_t *
+retrieve_inode(int inode_num, int mode){
+	/* Returns a pointer to specific inode, Or NULL on error */
+	static inode_t	inode;
+	static int 		last_inode_num = 0;
+	static int 		last_retrieve_mode = -1;
+
+	if (mode == R_FLUSH && last_inode_num){
+		last_retrieve_mode = R_RD;			/* set to R_RD, so that
+											the next read call returns cached copy */
+		if(write_struct(last_inode_num, &inode) < 0){
+			return NULL;
+		}
+		return &inode;
+	}
+	if (mode == R_FLUSH){
+		return &inode;
+	}
+	if (inode_num && last_inode_num == inode_num){
+		last_retrieve_mode = mode;
+		return &inode; 							/* return inode in cache, 
+												if accessing the same inode */
+	}
+	if (last_inode_num 
+		&& (last_retrieve_mode == R_WR)
+		&& (write_struct(last_inode_num, &inode) < 0) ){
+		return NULL; 							/* flush cache to disk */
+	}
+	if ( read_struct(inode_num, &inode) < 0 )	/* load new inode to cache */
+		return NULL;
+	last_inode_num 	   = inode_num;
+	last_retrieve_mode = mode;
+	return &inode;
+}
+
+dirent_t *
+retrieve_dirent(int blocknum, int mode)
+	/* Returns a pointer to struct dirent, Or NULL on error */
+{
+	int min_required_blocks;
+	static dirent_t dirent;
+	static int 		last_blocknum = 0;
+	static int 		last_retrieve_mode = -1;
+
+	if (mode == R_FLUSH && last_blocknum){
+		last_retrieve_mode = R_RD;			/* set to R_RD, so that
+											the next read call returns cached copy */
+		if(write_struct(last_blocknum, &dirent) < 0){
+			return NULL;
+		}
+		return &dirent;
+	}
+	if (mode == R_FLUSH){
+		return &dirent;
+	}
+	if (blocknum && last_blocknum == blocknum){
+		last_retrieve_mode = mode;
+		return &dirent;							/* no need to access disk 
+											   if the block is still in cache */
+	}
+
+	min_required_blocks = 1 			/* vcb */
+						+ I_TABLE_SIZE  /* inode table */
+						+ 1 			/* valid list  */
+						+ 1 			/* root dirent */;
+	if (blocknum < min_required_blocks-1)
+		return NULL;
+	if (last_blocknum 
+		&& (last_retrieve_mode == R_WR)
+		&& (write_struct(last_blocknum, &dirent) < 0)){
+		return NULL;							/* flush cache to disk */
+	}
+	if ( read_struct(blocknum, &dirent) < 0 )
+		return NULL;
+	last_blocknum = blocknum;
+	last_retrieve_mode = mode;
+	return &dirent;
 }
 
 
@@ -248,7 +282,7 @@ step_dir(inode_t *dp)
 			block = dpbuf->i_direct[block_index];
 			offset = 0;
 
-			dirbuf = retrieve_dirent(block);
+			dirbuf = retrieve_dirent(block, R_RD);
 		}
 
 		entry = dirbuf->d_entries[offset];
@@ -258,6 +292,29 @@ step_dir(inode_t *dp)
 
 	c++;
 	return &entry;
+}
+
+free_t *
+get_free()
+	/* Returns pointer to the free block, 
+		Or NULL on no space or error */
+{
+	static free_t freeb;
+	static int 	  last_free;
+	vcb_t         *vbp;
+	int 		  block;
+
+	vbp = retrieve_vcb();
+	if (!vbp)
+		return NULL;
+	block = vbp->vb_free;
+	if (block < 0)
+		return NULL;
+	if (last_free == block)
+		return &freeb; 					/* return cached when same as last request */
+	if ( read_struct(block, &freeb) < 0 )
+		return NULL;
+	return &freeb;
 }
 
 int
@@ -298,7 +355,7 @@ find_ino(const char *path)
 		token = *tokenp;
 		if ( ( insert=search_entry(token, inodep, &dir, &ent) ) < 0 )
 			return -1;
-		if (!(inodep = retrieve_inode(ent.et_ino)))
+		if (!(inodep = retrieve_inode(ent.et_ino, R_RD)))
 			return -1;
 	}
 	if (i != (tokenc-1))
@@ -352,7 +409,7 @@ path2tokens(char* path, char *** tokens)
 }
 
 insert_t
-search_entry(char *et_name, inode_t *inodep, dirent_t *dirp, entry_t *entp)
+search_entry(const char *et_name, inode_t *inodep, dirent_t *dirp, entry_t *entp)
 		/* Returns 
 				insert value of the entry position
 				-1 not found
@@ -375,7 +432,7 @@ search_entry(char *et_name, inode_t *inodep, dirent_t *dirp, entry_t *entp)
 
 	total_blocks = inodep->i_blocks;
 	for (int i=0; i<total_blocks; i++){
-		if ( !(direntp = retrieve_dirent(inodep->i_direct[i])) )
+		if ( !(direntp = retrieve_dirent(inodep->i_direct[i], R_RD)) )
 			return -2;
 		for (int j=0; j<8; j++){
 			entry = direntp->d_entries[i];
@@ -447,8 +504,9 @@ print_vcb(){
 	debug("print_vcb:\n"
 		  "           magic: %d\n"
 		  "            root: %d\n"
-		  "            free: %d"
-		  , vcb.vb_magic, vcb.vb_root, vcb.vb_free);
+		  "            free: %d\n"
+		  "           valid: %d"
+		  , vcb.vb_magic, vcb.vb_root, vcb.vb_free, vcb.vb_valid);
 }
 
 void 
@@ -468,7 +526,7 @@ print_inode(inode_t *ip){
  	dirent_t *direntp;
  	entry_t  e1, e2;
 
- 	direntp = retrieve_dirent(ip->i_direct[0]);
+ 	direntp = retrieve_dirent(ip->i_direct[0], R_RD);
  	if (!direntp){
  		err("failed to retrieve dirent @ %d", ip->i_direct[0]);
  		return;

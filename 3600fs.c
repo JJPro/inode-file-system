@@ -105,16 +105,27 @@ static void vfs_unmount (void *private_data) {
   vcb_t        *vcbp       = retrieve_vcb();
   valid_t *validp = retrieve_valid();
   if (root_needs_update 
-    && ( write_struct(1, rootp) < 0 ) ) {   /* flush root cache */
+    && ( write_struct(1, rootp) < 0 ) ) {               /* flush root cache */
     err("       ->updating root");
-  }
-  vcbp->vb_clean = true;
-  if ( write_struct(0, vcbp) < 0 ) {        /* flush vcb cache */
-    err("       ->updating vcb"); 
+    dunconnect();
   }
   if (validation_needs_update 
-    && ( write_struct(vcbp->vb_valid, validp) < 0 ) ){
+    && ( write_struct(vcbp->vb_valid, validp) < 0 ) ){  /* flush valid cache */
     err("       ->updating valid table");
+    dunconnect();
+  }
+  if (!retrieve_inode(0, R_FLUSH)){                     /* flush inode cache */
+    err("       ->flusing cached inode"); 
+    dunconnect();
+  }
+  if (!retrieve_dirent(0, R_FLUSH)){                    /* flush dirent cache */
+    err("       ->flushing cached dirent");
+    dunconnect();
+  }
+  vcbp->vb_clean = true;              /* all writes are successful, reset clean bit */
+  if ( write_struct(0, vcbp) < 0 ) {                    /* flush vcb cache */
+    err("       ->updating vcb"); 
+    dunconnect();
   }
 
   // Do not touch or move this code; unconnects the disk
@@ -156,7 +167,7 @@ static int vfs_getattr(const char *path, struct stat *stbuf) {
       return -errno;
     }
   }
-  if ( !(inodep = retrieve_inode(ino)) ){
+  if ( !(inodep = retrieve_inode(ino, R_RD)) ){
     err("       retrieve inode failed");
     return -errno;
   }
@@ -196,14 +207,18 @@ static int vfs_getattr(const char *path, struct stat *stbuf) {
  * HINT: Don't forget to create . and .. while creating a
  * directory.
  */
-/*
- * NOTE: YOU CAN IGNORE THIS METHOD, UNLESS YOU ARE COMPLETING THE 
- *       EXTRA CREDIT PORTION OF THE PROJECT.  IF SO, YOU SHOULD
- *       UN-COMMENT THIS METHOD.
 static int vfs_mkdir(const char *path, mode_t mode) {
 
-  return -1;
-} */
+
+    // if (insert = add_entry(".", ino, dirp) < 0)     /* . */
+    //     return -errno;
+    // ...change inode for <..> ...
+    // if (insert = add_entry("..", ino, dirp) < 0)    /* .. */
+    //     return -errno;
+
+
+    return -1;
+} 
 
 /** Read directory
  *
@@ -242,12 +257,12 @@ static int vfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
         debug("       inode not exist for path %s", path);
         return -errno;
     }
-    if ( !( dp = retrieve_inode(ino) ) ) {
+    if ( !( dp = retrieve_inode(ino, R_RD) ) ) {
         debug("       retrieve inode failed");
         return -errno;
     }
     ep = step_dir(dp);
-    if ( !(inodep = retrieve_inode(ep->et_ino)) ) return -errno;
+    if ( !(inodep = retrieve_inode(ep->et_ino, R_RD)) ) return -errno;
     st.st_ino = inodep->i_ino;
     st.st_mode = inodep->i_type | inodep->i_mode;
     if (filler(buf, ep->et_name, &st, 0))
@@ -256,7 +271,7 @@ static int vfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
     while ((ep = step_dir(NULL))) {
         debug("       current entry inode: %d", ep->et_ino);
         memset(&st, 0, sizeof(st));
-        if ( !(inodep = retrieve_inode(ep->et_ino)) ) return -errno;
+        if ( !(inodep = retrieve_inode(ep->et_ino, R_RD)) ) return -errno;
 
         st.st_ino = inodep->i_ino;
         st.st_mode = inodep->i_type | inodep->i_mode;
@@ -272,78 +287,7 @@ static int vfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
  *
  */
 static int vfs_create(const char *path, mode_t mode, struct fuse_file_info *fi) {
-    // int             dir_ino;
-    // int             file_ino;
-    // vcb_t           * vbp;
-    // free_t          *freep;
-    // inode_t         file_inode;
-    // inode_t         *fp;
-    // entry_t         e;
-    // inode_t         * dp;
-    // dirent_t        * direntp;
-    // char            * m_path;  /* mutable path str required by dirname() and basename() */
-    // char            * dirname;
-    // char            * basename;
-    // insert_t        insert;
-    // insert_t        new_insert;
-    // int             block;
-    // int             offset;
-    // int             new_size;
-    // int             new_blocks;
-    // int             new_block_index;
-    // struct timespec now;
 
-    // m_path   = malloc((strlen(path) + 1));
-    // strcpy(m_path, path);
-    // dirname  = dirname (m_path);
-    // strcpy(m_path, path);
-    // basename = basename(m_path);
-
-    // dir_ino = find_ino(dirname); if (dir_ino<0) {err("no such directory"); return -errno;}
-    // dp      = retrieve_inode(dir_ino); if (!dp) {err("error reading disk"); return -errno;}
-    // insert = dp->i_insert;
-
-    // vbp      = retrieve_vcb();
-    // file_ino = vbp->vb_free_ino;
-    // if (file_ino < 0){
-    //     err("no space available");
-    //     return -errno;
-    // }
-    // fp = retrieve_inode
-
-    // if (insert){
-    //     block  = I_BLOCK(insert);
-    //     offset = I_OFFSET(insert);
-    // } else {
-    //     freep = retrieve_free(); 
-    
-    //     if (!freep) 
-    //         return -errno;
-    //     block = vbp->vb_free;
-    //     offset = 0;
-    //     vbp->vb_free = freep->f_next;
-
-    //     new_insert = I_INSERT(block, 1);
-    // }
-
-    // if (insert) {           /* need to retrieve dirent */
-    //     direntp = retrieve_dirent(block);
-    //     new_insert = direntp->d_entries[offset].et_insert;
-    // }
-
-    // dp->i_insert = new_insert;
-    // ...
-
-    // new_insert = I_INSERT(new_block, new_offset);
-    // if (clock_gettime(CLOCK_REALTIME, &now) == -1)
-    //     return -errno;
-
-    // dp->i_size           = new_size;
-    // dp->i_blocks         = new_blocks;
-    // dp->I_INSERT         = new_insert;
-    // dp->i_atime          = now;
-    // dp->i_mtime          = now;
-    // ...
     return 0;
 }
 

@@ -14,3 +14,20 @@ clean:
 
 squeaky: clean
 	rm -f MYDISK
+
+mk:
+	./3600mkfs 10000
+
+mt:
+	./3600fs -s -d tmp 2>log &
+
+umt: 
+	fusermount -u tmp
+
+tail: 
+	tail -f log
+
+full:
+	less log
+
+
