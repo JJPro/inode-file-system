@@ -97,9 +97,9 @@ format_disk(int size) /* size: total number of blocks on disk */
 			return -1;
 	}
 
-	valid.v_entries[1] = 1;
+	valid.v_entries[1] = V_VALID;
 	for (int i=2; i<I_TABLE_SIZE+1; i++){
-		valid.v_entries[i] = 0;
+		valid.v_entries[i] = V_INVALID;
 	}
 	if (write_struct(valid_block, &valid) < 0)  /* valid table */
 		return -1;

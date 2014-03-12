@@ -207,14 +207,66 @@ static int vfs_getattr(const char *path, struct stat *stbuf) {
  * HINT: Don't forget to create . and .. while creating a
  * directory.
  */
-static int vfs_mkdir(const char *path, mode_t mode) {
+static int vfs_mkdir(const char *path, mode_t mode) 
+        /* dependences: 
+                child dirent .. ent   <-   parent_ino
+                
+                child insert          <-   child_dirent_bnum
+                child direct[0]       <-   child_dirent_bnum
+
+                valid.v_entries[]     <-   child_ino
+
+                parent.i_insert       <-   new_parent_dirent_bnum; parent_dirent, self
+                parent.i_direct[]     <-   new_parent_dirent_bnum
+
+                vcb.vb_free           <-   freep
+
+           required elements: 
+                + child dirent
+                    - .                             child_ino
+                    - ..                            *parent_ino
+                + child inode 
+                    - i_ino                         *child_ino
+                    - i_type                        S_IFREG
+                    - i_size                        2
+                    - i_user                        user
+                    - i_group                       group
+                    - i_mode                        mode
+                    - i_blocks                      1
+                    - i_insert                      *I_INSERT(child_dirent_bnum, 2)
+                    - i_atime, i_mtime, i_ctime     now
+                    - i_direct[0]                   *child_dirent_bnum
+                + valid
+                    - v_entries[]                   v_entries[child_ino] = V_INVALID
+                + parent inode
+                    - i_size                                +1
+                    - i_blocks (untouched OR +1,            = i_insert ? i_blocks : i_blocks+1;
+                                depends on insert val)
+                    - i_insert                              
+                                             < 0            *I_INSERT(new_parent_dirent_bnum, 0)
+                                             > 0            *parent_dirent.entries[I_OFFSET(parent_insert)].et_insert
+                    - i_atime, i_mtime                      now
+                    - i_direct[]                            i_insert ? nothing : i_direct[i_blocks-1] = new_parent_dirent_bnum
+                        (update or assign new block, 
+                                    depends on insert val)
+                + parent dirent OR new parent dirent (depens on insert val)
+                                    parent_insert < 0       new parent dirent
+                                    parent_insert > 0       *retrieve_dirent(I_BLOCK(parent_insert), R_WR), 
+                                                            & update it with child entry after usage
+                                                            (need basename, child_ino)
+                + vcb
+                    - vb_free */
+{
+    int child_ino;
+    int parent_ino;
+    int child_dirent_bnum;
 
 
-    // if (insert = add_entry(".", ino, dirp) < 0)     /* . */
-    //     return -errno;
-    // ...change inode for <..> ...
-    // if (insert = add_entry("..", ino, dirp) < 0)    /* .. */
-    //     return -errno;
+    if (insert = add_entry(".", ino, dirp) < 0)     /* . */
+        return -errno;
+    ...update inode for <..> ...
+    if (insert = add_entry("..", ino, parentp) < 0)    /* .. */
+        return -errno;
 
 
     return -1;

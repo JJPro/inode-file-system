@@ -15,7 +15,9 @@
 #define R_FLUSH 3				/* retrieve functions mode: flush cached objects */
 
 #define VALID_TABLE_SIZE 201 	/* I_TABLE_SIZE + 1 */
-#define JUNK_SIZE 311		 	/* BLOCKSIZE - VALID_TABLE_SIZE */
+#define JUNK_SIZE 		 311 	/* BLOCKSIZE - VALID_TABLE_SIZE */
+#define V_VALID 		 0		/* inode is valid */
+#define V_INVALID 		 1 		/* inode is invalid */
 
 // MACROs:
 #define I_BLOCK(x)  	( (int) ( (x) >> 3 ) )			/* insert entry block */
@@ -96,6 +98,9 @@ valid_t  *retrieve_valid();
 inode_t  *retrieve_inode(int inode_num, int mode);
 dirent_t *retrieve_dirent(int blocknum, int mode);
 
+inode_t  *clear_inode(inode_t *inodep);  	/* Returns pointer or NULL on error */
+dirent_t *clear_dirent(dirent_t *dirp);		/* Returns pointer or NULL on error */
+
 entry_t  *step_dir(inode_t *dp);
 free_t 	 *get_free();
 
@@ -104,7 +109,7 @@ int      path2tokens(char* path, char *** tokens);
 			/* caller is responsible for freeing memory dynamically allocated to tokens */
 insert_t search_entry(const char* et_name, inode_t *inodep, dirent_t *dirp, entry_t *entp);
 			/* dirp and entp is statically allocated */
-insert_t add_entry   (const char* et_name, int ino, inode_t *dirp);
+insert_t add_entry   (const char* et_name, int ino, inode_t *parentp);
 			/* add an entry (et_ino = ino, et_name = name) to the directory, 
 						whose inode is what dirp refers to.
 				Returns new insert value for the directry,
