@@ -46,7 +46,7 @@ format_disk(int size) /* size: total number of blocks on disk */
 		return -1;
 	}
 
-	free_starter = min_required_blocks - 1;
+	free_starter = min_required_blocks;
 	vcb.vb_magic = MAGIC;
 	vcb.vb_blocksize = BLOCKSIZE;
 	vcb.vb_root = 1;
@@ -86,7 +86,7 @@ format_disk(int size) /* size: total number of blocks on disk */
 
 	inode.i_ino = 0;
 	inode.i_direct[0] = -1;
-	for (int i=2; i<I_TABLE_SIZE; i++){
+	for (int i=2; i<I_TABLE_SIZE+1; i++){
 		if ( write_struct(i, &inode) < 0 )		/* the rest of I-node table */
 			return -1;
 	}
@@ -178,6 +178,9 @@ step_dir(inode_t *dp)
 	static int 			block_index;
 	static int 			block;
 	static int 			offset;
+	static int 			dirsize;
+	static int 			c;		/* number of entries viewed */
+	static inode_t		*dpbuf;
 	static dirent_t 	*dirbuf;
 	static entry_t 		entry;
 
@@ -187,13 +190,20 @@ step_dir(inode_t *dp)
 		block_index = 0;
 		block 		= 0;
 		offset 		= 0;
+		dirsize 	= dp->i_size;
+		c 			= 0;
 	}
 
+	if (c == dirsize)
+		return NULL;
+	
 	do {
 		if (offset == 8 || dp){ 				/* cache new/next dirent_t data in dirbuf */
 			if ( offset == 8 )
 				block_index++;
-			block = dp->i_direct[block_index];
+			if (dp)
+				dpbuf = dp;
+			block = dpbuf->i_direct[block_index];
 			offset = 0;
 
 			dirbuf = retrieve_dirent(block);
@@ -204,6 +214,7 @@ step_dir(inode_t *dp)
 	}
 	while (entry.et_ino == 0);
 
+	c++;
 	return &entry;
 }
 
@@ -227,8 +238,14 @@ find_ino(const char *path)
 
 	strcpy(m_path, path);
 
+	if ((strcmp(path, "/") == 0) ||
+		(strcmp(path, "///") == 0))
+		return 1;
+
 	inodep = retrieve_root();
 	tokenc = path2tokens(m_path, &tokens);
+	if (tokenc < 0)
+		return -1;
 	tokenp = tokens;
 
 	int i;
@@ -395,13 +412,10 @@ print_vcb(){
 void 
 print_root(){
  	debug("print_root:");
-	inode_t root;
- 	if ( read_struct(1, &root) < 0 ) {
- 		err("print_root()->read_struct");
- 		return;
- 	}
- 	root_initialized = true;
- 	print_inode(&root);
+	inode_t *rootp;
+ 	
+ 	rootp = retrieve_root();
+ 	print_inode(rootp);
 }
 
 void
@@ -409,10 +423,25 @@ print_inode(inode_t *ip){
  	char *username  = getpwuid(ip->i_uid)->pw_name;
  	char *groupname = getgrgid(ip->i_gid)->gr_name;
 
+ 	dirent_t *direntp;
+ 	entry_t  e1, e2;
+
+ 	direntp = retrieve_dirent(ip->i_direct[0]);
+ 	if (!direntp){
+ 		err("failed to retrieve dirent @ %d", ip->i_direct[0]);
+ 		return;
+ 	}
+ 	e1 = direntp->d_entries[0];
+ 	e2 = direntp->d_entries[1];
+
  	debug("    inode: %d\n"
  		  "            size: %d\n"
  		  "            user: %s\n"
  		  "           group: %s\n"
- 		  "            mode: 0%o"
- 		  , ip->i_ino, ip->i_size, username, groupname, (int)ip->i_mode);
+ 		  "            mode: 0%o\n"
+ 		  "       direct[0]: %d\n"
+ 		  "           file1: %s\n"
+ 		  "           file2: %s"
+ 		  , ip->i_ino, ip->i_size, username, groupname, (int)ip->i_mode, 
+ 		  ip->i_direct[0], e1.et_name, e2.et_name);
 }

@@ -131,8 +131,6 @@ static int vfs_getattr(const char *path, struct stat *stbuf) {
 
   int ino;
   inode_t * inodep;
-  char *m_path = (char *)path;    /* mutable pointer */
-  char *m_path2 = (char *)path;   /* mutable pointer */
 
   // Do not mess with this code 
   stbuf->st_nlink = 1; // hard links
@@ -141,21 +139,20 @@ static int vfs_getattr(const char *path, struct stat *stbuf) {
 
   /* 3600: YOU MUST UNCOMMENT BELOW AND IMPLEMENT THIS CORRECTLY */
   debug("       looking for path: %s", path);
-  if (strcmp(dirname(m_path), "/") == 0 &&
-      strcmp(basename(m_path2), "/") == 0){
+  if (strcmp(path, "/") == 0 &&
+      strcmp(path, "///") == 0){
     stbuf->st_mode  = 0777 | S_IFDIR;               /* is root */
     ino = 1;
   }
   else {
-    m_path = (char *)path;    /* reset m_path */
-    if ((ino = find_ino(m_path)) < 0){
+    if ((ino = find_ino(path)) < 0){
       debug("       invalid path");
-      return -1;
+      return -errno;
     }
   }
   if ( !(inodep = retrieve_inode(ino)) ){
     err("       retrieve inode failed");
-    return -1;
+    return -errno;
   }
   stbuf->st_mode  = I_ISREG(inodep->i_type) ? 
                     inodep->i_mode | S_IFREG:
@@ -269,6 +266,47 @@ static int vfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
  *
  */
 static int vfs_create(const char *path, mode_t mode, struct fuse_file_info *fi) {
+    int             dir_ino;
+    int             file_ino;
+    inode_t         file_inode;
+    entry_t         e;
+    inode_t         * dp;
+    dirent_t        * direntp;
+    char            * m_path;  /* mutable path str required by dirname() and basename() */
+    char            * dirname;
+    char            * basename;
+    insert_t        insert;
+    int             block;
+    int             offset;
+    insert_t        new_insert;
+    int             new_block;
+    int             new_offset;
+    int             new_size;
+    int             new_blocks;
+    int             new_block_index;
+    struct timespec now;
+
+    m_path   = malloc((strlen(path) + 1));
+    strcpy(m_path, path);
+    dirname  = dirname (m_path);
+    strcpy(m_path, path);
+    basename = basename(m_path);
+
+    dir_ino = find_ino(dirname); if (dir_ino<0) {err("no such directory"); return -errno;}
+    dp = retrieve_inode(dir_ino); if (!dp) {err("error reading disk"); return -errno;}
+
+    ...
+
+    new_insert = I_INSERT(new_block, new_offset);
+    if (clock_gettime(CLOCK_REALTIME, &now) == -1)
+        return -errno;
+
+    dp->i_size           = new_size;
+    dp->i_blocks         = new_blocks;
+    dp->I_INSERT         = new_insert;
+    dp->i_atime          = now;
+    dp->i_mtime          = now;
+    ...
     return 0;
 }
 
