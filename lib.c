@@ -7,10 +7,10 @@
 #include <sys/stat.h>  	/* S_IFREG, S_IFDIR */
 
 #include "lib.h"
-#include "disk.h" 		/* BLOCKSIZE */
 
 static vcb_t vcb;
 static inode_t root;
+static valid_t valid;
 static bool vcb_initialized = false;
 static bool root_initialized = false;
 
@@ -31,15 +31,18 @@ format_disk(int size) /* size: total number of blocks on disk */
 	int min_required_blocks;
 	int free_starter;
 	int root_dirent_block;
+	int valid_block;
 	int insert_block, insert_offset;
 	struct timespec now;
 	entry_t entry;
 	dirent_t root_dirent;
 	free_t free_b;
 	inode_t inode;
+	valid_t valid;
 
 	min_required_blocks = 1 			/* vcb */
 						+ I_TABLE_SIZE  /* inode table */
+						+ 1 			/* valid table */
 						+ 1 			/* root dirent */;
 	if (size < min_required_blocks){
 		err("size must be at least %d", min_required_blocks);
@@ -47,13 +50,15 @@ format_disk(int size) /* size: total number of blocks on disk */
 	}
 
 	free_starter = min_required_blocks;
+	valid_block = free_starter -2;
 	vcb.vb_magic = MAGIC;
 	vcb.vb_blocksize = BLOCKSIZE;
 	vcb.vb_root = 1;
 	vcb.vb_free = free_starter;
 	vcb.vb_itable_size = I_TABLE_SIZE;
 	vcb.vb_clean = true;
-	if (write_struct(0, &vcb) < 0)			/* vcb */
+	vcb.vb_valid = valid_block;
+	if (write_struct(0, &vcb) < 0)				/* vcb */
 		return -1;
 	vcb_initialized = true;
 
@@ -74,13 +79,13 @@ format_disk(int size) /* size: total number of blocks on disk */
 	inode.i_mtime = now;
 	inode.i_ctime = now;
 	inode.i_direct[0] = root_dirent_block;
-	for (int i=1; i<106; i++){
+	for (int i=1; i<105; i++){
 		inode.i_direct[i] = -1;
 	}
 	inode.i_single = -1;
 	inode.i_double = -1;
 	root = inode;
-	if (write_struct(1, &root) < 0)			/* root inode */
+	if (write_struct(1, &root) < 0)				/* root inode */
 		return -1;
 	root_initialized = true;
 
@@ -90,6 +95,13 @@ format_disk(int size) /* size: total number of blocks on disk */
 		if ( write_struct(i, &inode) < 0 )		/* the rest of I-node table */
 			return -1;
 	}
+
+	valid.v_entries[1] = 1;
+	for (int i=2; i<I_TABLE_SIZE+1; i++){
+		valid.v_entries[i] = 0;
+	}
+	if (write_struct(valid_block, &valid) < 0)  /* valid table */
+		return -1;
 
 	entry.et_ino = 1;
 	strcpy(entry.et_name, ".");			/* .  entry */
@@ -162,6 +174,36 @@ retrieve_dirent(int blocknum)
 		return NULL;
 	return &dirent;
 }
+
+free_t *
+retrieve_free()
+	/* Returns pointer to the free block, 
+		Or NULL on no space or error */
+{
+	static free_t freeb;
+	vcb_t         *vbp;
+	int 		  block;
+
+	vbp = retrieve_vcb();
+	if (!vbp)
+		return NULL;
+	block = vbp->vb_free;
+	if (block < 0)
+		return NULL;
+	if ( read_struct(block, &freeb) < 0 )
+		return NULL;
+	return &freeb;
+}
+
+valid_t  *
+retrieve_valid(){
+	static bool cached = false;
+	if (!cached
+	   && (read_struct(vcb.vb_valid, &valid) < 0))
+		return NULL;
+	return &valid;
+}
+
 
 entry_t *
 step_dir(inode_t *dp)

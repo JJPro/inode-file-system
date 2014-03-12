@@ -3,11 +3,12 @@
 #include <unistd.h>				/* gid_t, uid_t, mode_t */
 #include <sys/types.h>
 #include <stdbool.h>
+#include "disk.h" 		/* BLOCKSIZE */
 
 #define MAGIC 8876318
 #define I_TABLE_SIZE 200
 
-#define MAX_FILENAME_LENGTH 60	/* see declaration of entry_t for why it must be this value */
+#define MAX_FILENAME_LENGTH 56	/* see declaration of entry_t for why it must be this value */
 #define MAX_DIR_DEPTH		10
 
 // MACROs:
@@ -18,16 +19,20 @@
 #define I_ISREG(t) 		( (t) == S_IFREG )	/* is file? */
 #define I_ISDIR(t)		( (t) == S_IFDIR )	/* is directory? */
 
+#define VALID_TABLE_SIZE 201 /* I_TABLE_SIZE + 1 */
+#define JUNK_SIZE 311		 /* BLOCKSIZE - VALID_TABLE_SIZE */
+
 typedef long insert_t;
 
 typedef struct {
 	int  vb_magic;
 	int  vb_blocksize;		/* size of logical block */
 	int  vb_root; 			/* root inode */
-	int  vb_free;			/* first free block */
+	int  vb_valid; 			/* inode table validation block */
+	int  vb_free;			/* next free block */
 	int  vb_itable_size;	/* size of inode table */
 	bool vb_clean;			/* clean bit */
-	char name[491];
+	char name[487];
 } vcb_t;
 
 typedef struct {
@@ -49,7 +54,7 @@ typedef struct {
 	struct timespec i_mtime;
 	struct timespec i_ctime;
 
-	int 			i_direct[106];
+	int 			i_direct[105];
 	int 			i_single;
 	int 			i_double;
 } inode_t;
@@ -59,8 +64,9 @@ typedef struct {
 } indirect_t;
 
 typedef struct {
-	int  et_ino;
-	char et_name[60];
+	int  	  et_ino;
+	char 	  et_name[56];
+	insert_t  et_insert;
 } entry_t;
 
 typedef struct {
@@ -72,6 +78,11 @@ typedef struct {
 	char f_junk[508];
 } free_t;
 
+typedef struct {
+	char v_entries[VALID_TABLE_SIZE];
+	char v_junk[JUNK_SIZE];
+} valid_t;
+
 
 int format_disk(int size);
 
@@ -79,6 +90,8 @@ vcb_t    *retrieve_vcb(); /* return vcb is statically alloced */
 inode_t  *retrieve_inode(int inode_num);
 inode_t  *retrieve_root();
 dirent_t *retrieve_dirent(int blocknum);
+free_t 	 *retrieve_free();
+valid_t  *retrieve_valid();
 
 entry_t  *step_dir(inode_t *dp);
 

@@ -43,6 +43,7 @@
 
 static bool vcb_needs_update  = false;
 static bool root_needs_update = false;
+static bool validation_needs_update = false;
 
 static void vfs_unmount (void *private_data);
 
@@ -100,8 +101,9 @@ static void vfs_unmount (void *private_data) {
   /* 3600: YOU SHOULD ADD CODE HERE TO MAKE SURE YOUR ON-DISK STRUCTURES
            ARE IN-SYNC BEFORE THE DISK IS UNMOUNTED (ONLY NECESSARY IF YOU
            KEEP DATA CACHED THAT'S NOT ON DISK */
-  inode_t *rootp = retrieve_root();
-  vcb_t   *vcbp  = retrieve_vcb();
+  inode_t      *rootp      = retrieve_root();
+  vcb_t        *vcbp       = retrieve_vcb();
+  valid_t *validp = retrieve_valid();
   if (root_needs_update 
     && ( write_struct(1, rootp) < 0 ) ) {   /* flush root cache */
     err("       ->updating root");
@@ -109,6 +111,10 @@ static void vfs_unmount (void *private_data) {
   vcbp->vb_clean = true;
   if ( write_struct(0, vcbp) < 0 ) {        /* flush vcb cache */
     err("       ->updating vcb"); 
+  }
+  if (validation_needs_update 
+    && ( write_struct(vcbp->vb_valid, validp) < 0 ) ){
+    err("       ->updating valid table");
   }
 
   // Do not touch or move this code; unconnects the disk
@@ -266,47 +272,78 @@ static int vfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
  *
  */
 static int vfs_create(const char *path, mode_t mode, struct fuse_file_info *fi) {
-    int             dir_ino;
-    int             file_ino;
-    inode_t         file_inode;
-    entry_t         e;
-    inode_t         * dp;
-    dirent_t        * direntp;
-    char            * m_path;  /* mutable path str required by dirname() and basename() */
-    char            * dirname;
-    char            * basename;
-    insert_t        insert;
-    int             block;
-    int             offset;
-    insert_t        new_insert;
-    int             new_block;
-    int             new_offset;
-    int             new_size;
-    int             new_blocks;
-    int             new_block_index;
-    struct timespec now;
+    // int             dir_ino;
+    // int             file_ino;
+    // vcb_t           * vbp;
+    // free_t          *freep;
+    // inode_t         file_inode;
+    // inode_t         *fp;
+    // entry_t         e;
+    // inode_t         * dp;
+    // dirent_t        * direntp;
+    // char            * m_path;  /* mutable path str required by dirname() and basename() */
+    // char            * dirname;
+    // char            * basename;
+    // insert_t        insert;
+    // insert_t        new_insert;
+    // int             block;
+    // int             offset;
+    // int             new_size;
+    // int             new_blocks;
+    // int             new_block_index;
+    // struct timespec now;
 
-    m_path   = malloc((strlen(path) + 1));
-    strcpy(m_path, path);
-    dirname  = dirname (m_path);
-    strcpy(m_path, path);
-    basename = basename(m_path);
+    // m_path   = malloc((strlen(path) + 1));
+    // strcpy(m_path, path);
+    // dirname  = dirname (m_path);
+    // strcpy(m_path, path);
+    // basename = basename(m_path);
 
-    dir_ino = find_ino(dirname); if (dir_ino<0) {err("no such directory"); return -errno;}
-    dp = retrieve_inode(dir_ino); if (!dp) {err("error reading disk"); return -errno;}
+    // dir_ino = find_ino(dirname); if (dir_ino<0) {err("no such directory"); return -errno;}
+    // dp      = retrieve_inode(dir_ino); if (!dp) {err("error reading disk"); return -errno;}
+    // insert = dp->i_insert;
 
-    ...
+    // vbp      = retrieve_vcb();
+    // file_ino = vbp->vb_free_ino;
+    // if (file_ino < 0){
+    //     err("no space available");
+    //     return -errno;
+    // }
+    // fp = retrieve_inode
 
-    new_insert = I_INSERT(new_block, new_offset);
-    if (clock_gettime(CLOCK_REALTIME, &now) == -1)
-        return -errno;
+    // if (insert){
+    //     block  = I_BLOCK(insert);
+    //     offset = I_OFFSET(insert);
+    // } else {
+    //     freep = retrieve_free(); 
+    
+    //     if (!freep) 
+    //         return -errno;
+    //     block = vbp->vb_free;
+    //     offset = 0;
+    //     vbp->vb_free = freep->f_next;
 
-    dp->i_size           = new_size;
-    dp->i_blocks         = new_blocks;
-    dp->I_INSERT         = new_insert;
-    dp->i_atime          = now;
-    dp->i_mtime          = now;
-    ...
+    //     new_insert = I_INSERT(block, 1);
+    // }
+
+    // if (insert) {           /* need to retrieve dirent */
+    //     direntp = retrieve_dirent(block);
+    //     new_insert = direntp->d_entries[offset].et_insert;
+    // }
+
+    // dp->i_insert = new_insert;
+    // ...
+
+    // new_insert = I_INSERT(new_block, new_offset);
+    // if (clock_gettime(CLOCK_REALTIME, &now) == -1)
+    //     return -errno;
+
+    // dp->i_size           = new_size;
+    // dp->i_blocks         = new_blocks;
+    // dp->I_INSERT         = new_insert;
+    // dp->i_atime          = now;
+    // dp->i_mtime          = now;
+    // ...
     return 0;
 }
 
