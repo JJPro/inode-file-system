@@ -144,6 +144,7 @@ static void vfs_unmount (void *private_data) {
  *
  */
 static int vfs_getattr(const char *path, struct stat *stbuf) {
+  fprintf(stdout, "readdir called\n");
   fprintf(stderr, "vfs_getattr called\n");
 
   int ino;
@@ -164,12 +165,12 @@ static int vfs_getattr(const char *path, struct stat *stbuf) {
   else {
     if ((ino = find_ino(path)) < 0){
       debug("       invalid path");
-      return -errno;
+      return -ENOEXIST; // return -errno;
     }
   }
   if ( !(inodep = retrieve_inode(ino, R_RD)) ){
     err("       retrieve inode failed");
-    return -errno;
+    return 0; // return -errno;
   }
   stbuf->st_mode  = I_ISREG(inodep->i_type) ? 
                     inodep->i_mode | S_IFREG:
@@ -195,7 +196,8 @@ static int vfs_getattr(const char *path, struct stat *stbuf) {
         ctime(&(stbuf->st_atime)),
         (int)stbuf->st_size,
         (int)stbuf->st_blocks);                     
-
+  fprintf(stdout, "getattr() return\n");
+  fprintf(stderr, "getattr() return\n");
   return 0;
 }
 
@@ -266,6 +268,8 @@ static int vfs_mkdir(const char *path, mode_t mode)
                     write child_dirent to disk
                     write parent_dirent to disk, if parent_insert < 0   */
 {
+    fprintf(stdout, "mkdir called\n");
+
     fprintf(stderr,"vfs_mkdir() called\n");
     char         m_path [strlen(path)+1]; /* mutable path for dirname(), basename() */
 
@@ -387,6 +391,9 @@ static int vfs_mkdir(const char *path, mode_t mode)
     if (write_struct(child_ino, &child_inode) < 0) return -errno;
     if (write_struct(child_dirent_bnum, &child_dirent) < 0) return -errno;
     if (write_struct(parent_dirent_bnum, parent_direntp) < 0) return -errno;
+
+    fprintf(stdout, "mkdir() return\n");
+    fprintf(stderr, "mkdir() return\n");
     return 0;
 } 
 
@@ -415,6 +422,7 @@ static int vfs_mkdir(const char *path, mode_t mode)
 static int vfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
                        off_t offset, struct fuse_file_info *fi)
 {
+    fprintf(stdout, "readdir called\n");
     debug("vfs_readdir()");
     int     ino;
     inode_t *dp;
@@ -448,6 +456,9 @@ static int vfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
         if (filler(buf, ep->et_name, &st, 0))
             break;
     }
+
+    fprintf(stdout, "readdir() return\n");
+    fprintf(stderr, "readdir() return\n");
     return 0;
 }
 
@@ -504,6 +515,7 @@ static int vfs_create(const char *path, mode_t mode, struct fuse_file_info *fi)
                     write child_inode to disk
                     write parent_dirent to disk, if parent_insert < 0    */
 {
+    fprintf(stdout, "create called\n");
 
     fprintf(stderr,"vfs_create() called\n");
     char         m_path [strlen(path)+1]; /* mutable path for dirname(), basename() */
@@ -602,6 +614,9 @@ static int vfs_create(const char *path, mode_t mode, struct fuse_file_info *fi)
 
     if (write_struct(child_ino, &child_inode) < 0) return -errno;
     if (write_struct(parent_dirent_bnum, parent_direntp) < 0) return -errno;
+
+    fprintf(stdout, "create() return\n");
+    fprintf(stderr, "create() return\n");
     return 0;
 }
 

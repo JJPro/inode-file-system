@@ -19,7 +19,7 @@ mk:
 	./3600mkfs 10000
 
 run:
-	./3600fs -s -d tmp 2>log &
+	./3600fs -s -d tmp >out 2>log &
 
 umt: 
 	fusermount -u tmp
