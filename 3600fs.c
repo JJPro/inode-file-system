@@ -732,8 +732,6 @@ static int vfs_write(const char *path, const char *buf, size_t size,
         current_writing_block_index = offset % BLOCKSIZE;
     }
 
-
-
     int _start = inodep->i_size;
     int _end   = offset - 1;
     int _offset = _start % BLOCKSIZE;
