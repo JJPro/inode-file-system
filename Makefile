@@ -18,7 +18,7 @@ squeaky: clean
 mk:
 	./3600mkfs 10000
 
-mt:
+run:
 	./3600fs -s -d tmp 2>log &
 
 umt: 
@@ -30,4 +30,5 @@ tail:
 full:
 	less log
 
-
+gg:
+	gdb 3600fs

@@ -22,7 +22,8 @@
 // MACROs:
 #define I_BLOCK(x)  	( (int) ( (x) >> 3 ) )			/* insert entry block */
 #define I_OFFSET(x) 	( (int) ( (x) & (long)7 ) )		/* insert entry offset */
-#define I_INSERT(x, y)	(insert_t)( ( (long)(x) << 3 ) + (y) )	/* generate insert value */
+#define I_INSERT(x, y)	(insert_t)( ( (long)(x) << 3 ) + (y) )	
+														/* generate insert value */
 
 #define I_ISREG(t) 		( (t) == S_IFREG )	/* is file? */
 #define I_ISDIR(t)		( (t) == S_IFDIR )	/* is directory? */
@@ -98,18 +99,28 @@ valid_t  *retrieve_valid();
 inode_t  *retrieve_inode(int inode_num, int mode);
 dirent_t *retrieve_dirent(int blocknum, int mode);
 
-inode_t  *clear_inode(inode_t *inodep);  	/* Returns pointer or NULL on error */
-dirent_t *clear_dirent(dirent_t *dirp);		/* Returns pointer or NULL on error */
+inode_t  *clear_inode(inode_t *inodep); 
+		 	/* Returns pointer or NULL on error */
+dirent_t *clear_dirent(dirent_t *dirp, insert_t initial_insert);		
+			/* second argument is insert value to first entry in dirent.
+					if this argument is given -1 or 0,
+							all entries will get insert value of -1
+					otherwise, 
+					        all entries get insert value pointer to the next entry, 
+					        except the last one get -1
+			Returns pointer or NULL on error */
 
 entry_t  *step_dir(inode_t *dp);
 free_t 	 *get_free();
+
+struct timespec *get_time();
 
 int      find_ino   (const char* path);
 int      path2tokens(char* path, char *** tokens); 
 			/* caller is responsible for freeing memory dynamically allocated to tokens */
 insert_t search_entry(const char* et_name, inode_t *inodep, dirent_t *dirp, entry_t *entp);
 			/* dirp and entp is statically allocated */
-insert_t add_entry   (const char* et_name, int ino, inode_t *parentp);
+// insert_t add_entry   (const char* et_name, int ino, inode_t *parentp);
 			/* add an entry (et_ino = ino, et_name = name) to the directory, 
 						whose inode is what dirp refers to.
 				Returns new insert value for the directry,

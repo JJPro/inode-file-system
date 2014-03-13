@@ -209,67 +209,185 @@ static int vfs_getattr(const char *path, struct stat *stbuf) {
  */
 static int vfs_mkdir(const char *path, mode_t mode) 
         /* dependences: 
-                child dirent .. ent   <-   parent_ino
+                child_dirent             <-   child_ino, parent_ino
                 
-                child insert          <-   child_dirent_bnum
-                child direct[0]       <-   child_dirent_bnum
+                child_inode.i_ino        <-   child_ino
+                child_inode.i_insert     <-   child_dirent_bnum
+                child_inode.i_direct[0]  <-   child_dirent_bnum
 
-                valid.v_entries[]     <-   child_ino
+                valid.v_entries[]        <-   child_ino
 
-                parent.i_insert       <-   new_parent_dirent_bnum; parent_dirent, self
-                parent.i_direct[]     <-   new_parent_dirent_bnum
+                parent.i_blocks          <-   parent_insert
+                parent.i_insert          <-   parent_insert, parent_dirent_bnum, parent_direntp
+                parent.i_direct[]        <-   parent_insert, parent_dirent_bnum
 
-                vcb.vb_free           <-   freep
+                parent_dirent            <-   parent_insert, child_ino, filename
+     
+                vcb.vb_free              <-   freep
 
            required elements: 
-                + child dirent
-                    - .                             child_ino
-                    - ..                            *parent_ino
                 + child inode 
                     - i_ino                         *child_ino
-                    - i_type                        S_IFREG
+                    - i_type                        S_IFDIR
                     - i_size                        2
-                    - i_user                        user
-                    - i_group                       group
+                    - i_uid                         user
+                    - i_gid                         group
                     - i_mode                        mode
                     - i_blocks                      1
                     - i_insert                      *I_INSERT(child_dirent_bnum, 2)
                     - i_atime, i_mtime, i_ctime     now
                     - i_direct[0]                   *child_dirent_bnum
+                + child dirent
+                    - .                             *child_ino
+                    - ..                            *parent_ino
                 + valid
-                    - v_entries[]                   v_entries[child_ino] = V_INVALID
-                + parent inode
+                    - v_entries[]                   *v_entries[child_ino] = V_VALID
+                + parent inode (update)
                     - i_size                                +1
-                    - i_blocks (untouched OR +1,            = i_insert ? i_blocks : i_blocks+1;
-                                depends on insert val)
+                    - i_blocks (untouched OR +1,         update in the end:
+                                depends on insert val)      *= parent_insert ? i_blocks : i_blocks+1;
                     - i_insert                              
-                                             < 0            *I_INSERT(new_parent_dirent_bnum, 0)
-                                             > 0            *parent_dirent.entries[I_OFFSET(parent_insert)].et_insert
+                                             < 0            *I_INSERT(parent_dirent_bnum(get new from freep), 1), init all other 7 entries inserts bellow in parent dirent creation
+                                             > 0         2. *pass in store next insert value as new insert: parent_direntp->entries[I_OFFSET(parent_insert)].et_insert
                     - i_atime, i_mtime                      now
-                    - i_direct[]                            i_insert ? nothing : i_direct[i_blocks-1] = new_parent_dirent_bnum
+                    - i_direct[]                            *parent_insert ? nothing : i_direct[i_blocks(updated)-1] = parent_dirent_bnum
                         (update or assign new block, 
                                     depends on insert val)
-                + parent dirent OR new parent dirent (depens on insert val)
-                                    parent_insert < 0       new parent dirent
-                                    parent_insert > 0       *retrieve_dirent(I_BLOCK(parent_insert), R_WR), 
-                                                            & update it with child entry after usage
-                                                            (need basename, child_ino)
+                + parent dirent (update OR new) (depens on parent_insert val)
+                                    parent_insert < 0       create new parent_dirent, init all other 7 entries' inserts
+                                    parent_insert > 0       *update parent_dirent: 
+                                                         1. parent_direntp = retrieve_dirent(I_BLOCK(parent_insert), R_WR), 
+                                                         3. & add child entry -- (need filename, child_ino)
                 + vcb
-                    - vb_free */
+                    - vb_free update along the procedure 
+
+                + last step:
+                    write child_inode to disk
+                    write child_dirent to disk
+                    write parent_dirent to disk, if parent_insert < 0   */
 {
-    int child_ino;
-    int parent_ino;
-    int child_dirent_bnum;
+    fprintf(stderr,"vfs_mkdir() called\n");
+    char         m_path [strlen(path)+1]; /* mutable path for dirname(), basename() */
 
+    vcb_t       *vcbp;                      /* check */
+    free_t      *freep;                     /* check */
+    valid_t     *validp;                    /* check */
+    
+    char         dirpath[strlen(path)+1];   /* check */
+    char         filename[strlen(path)+1];  /* check */
+    entry_t      entry;                     /* check */
 
-    if (insert = add_entry(".", ino, dirp) < 0)     /* . */
+    int          parent_ino;                /* check */
+    inode_t     *parent_inodep;             /* check */
+    insert_t     parent_insert;             /* check */
+    int          parent_dirent_bnum;        /* check */
+    dirent_t     parent_dirent;             /* check */
+    dirent_t    *parent_direntp;            /* check */
+
+    int          child_ino;                 /* check */
+    inode_t      child_inode;               /* check */
+    int          child_dirent_bnum;         /* check */
+    dirent_t     child_dirent;              /* check */
+
+    struct timespec *now;
+
+    vcbp = retrieve_vcb();                              /* vcbp */
+    freep = get_free();                                 /* freep */
+    validp = retrieve_valid(vcbp->vb_valid);            /* validp */
+
+    strcpy(m_path, path); 
+    strcpy(dirpath, dirname(m_path));                   /* dirname */
+    strcpy(m_path, path);               /* reset m_path for next call */
+    strcpy(filename, basename(m_path));                 /* filename */
+
+    parent_ino = find_ino(dirpath);                     /* parent_ino */
+    parent_inodep = retrieve_inode(parent_ino, R_WR);   /* parent_inodep */
+    parent_insert = parent_inodep->i_insert;            /* parent_insert */
+    if (!parent_insert){
+        parent_dirent_bnum = vcbp->vb_free;
+        if (parent_dirent_bnum < 0)
+            return -errno;                              /* parent_dirent_bnum */
+        freep = get_free();
+        vcbp->vb_free = freep->f_next;  /* update vcb free */
+
+        if (!clear_dirent(&parent_dirent, I_INSERT(parent_dirent_bnum, 0)))
+            return -errno;
+        entry.et_ino = child_ino;      
+        strcpy(entry.et_name, filename);
+        parent_dirent.d_entries[0] = entry;             /* parent_dirent */
+        parent_direntp = &parent_dirent;                /* parent_direntp */
+    } else {
+        parent_direntp = retrieve_dirent(I_BLOCK(parent_insert), R_WR);
+                                                        /* parent_direntp */
+    }
+
+    int i;
+    for (i=1; i<VALID_TABLE_SIZE; i++){
+        if (validp->v_entries[i] == V_INVALID){
+            child_ino = i;                              
+            break;
+        }
+    }
+    if (i >= VALID_TABLE_SIZE)                          /* child_ino */
         return -errno;
-    ...update inode for <..> ...
-    if (insert = add_entry("..", ino, parentp) < 0)    /* .. */
-        return -errno;
 
+    child_dirent_bnum = vcbp->vb_free;
+    if (child_dirent_bnum < 0)
+        return -errno;                                  /* child_dirent_bnum */
+    freep = get_free();
+    vcbp->vb_free = freep->f_next;  /* update vcb free */
 
-    return -1;
+    if (!clear_inode(&child_inode)) return -errno;
+    if (!(now = get_time()))        return -errno;
+    child_inode.i_ino  = child_ino;
+    child_inode.i_type = S_IFREG;
+    child_inode.i_size = 2;
+    child_inode.i_uid  = getuid();
+    child_inode.i_gid  = getgid();
+    child_inode.i_mode = mode;
+    child_inode.i_blocks = 1;
+    child_inode.i_insert = I_INSERT(child_dirent_bnum, 2);
+    child_inode.i_atime = *now;
+    child_inode.i_mtime = *now;
+    child_inode.i_ctime = *now;
+    child_inode.i_direct[0] = child_dirent_bnum;        /* child_inode */
+                                                                /* + child_inode */
+
+    if (!clear_dirent(&child_dirent, I_INSERT(child_dirent_bnum, 0)))
+        return -errno;                                  
+    entry.et_ino = child_ino;
+    strcpy(entry.et_name, ".");
+    child_dirent.d_entries[0] = entry;
+    entry.et_ino = parent_ino;
+    strcpy(entry.et_name, "..");
+    child_dirent.d_entries[1] = entry;                  /* child_dirent */
+                                                                /* + child_dirent */
+
+    validp->v_entries[child_ino] = V_VALID;                     /* + valid */
+
+    (parent_inodep->i_size)++;              /* i_size */
+    if (!parent_insert)
+        parent_inodep->i_blocks++;          /* i_blocks */
+    parent_inodep->i_insert = (!parent_insert)
+                            ? I_INSERT(parent_dirent_bnum, 1)
+                            : parent_direntp->d_entries[I_OFFSET(parent_insert)].et_insert;
+                                            /* i_insert */
+    parent_inodep->i_atime = *now;          
+    parent_inodep->i_mtime = *now;          /* i_atime, i_mtime */
+    if (!parent_insert)
+        parent_inodep->i_direct[parent_inodep->i_blocks - 1] = parent_dirent_bnum;
+                                            /* i_direct[] */    /* + parent_inode */
+
+    entry.et_ino = child_ino;      
+    strcpy(entry.et_name, filename);
+    if (parent_insert)
+        parent_direntp->d_entries[I_OFFSET(parent_insert)] = entry;
+                                                                /* + parent_dirent */
+
+    if (write_struct(child_ino, &child_inode) < 0) return -errno;
+    if (write_struct(child_dirent_bnum, &child_dirent) < 0) return -errno;
+    if (write_struct(parent_dirent_bnum, parent_direntp) < 0) return -errno;
+    return 0;
 } 
 
 /** Read directory
@@ -338,8 +456,152 @@ static int vfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
  * will create a new file named myFile in the /a/b directory.
  *
  */
-static int vfs_create(const char *path, mode_t mode, struct fuse_file_info *fi) {
+static int vfs_create(const char *path, mode_t mode, struct fuse_file_info *fi) 
+        /* dependences: 
+                valid.v_entries[]     <-   child_ino
 
+                parent.i_blocks       <-   parent_insert
+                parent.i_insert       <-   parent_dirent_bnum; parent_direntp, parent_insert
+                parent.i_direct[]     <-   parent_dirent_bnum
+
+                parent_dirent         <-   parent_insert, child_ino, filename
+
+                vcb.vb_free           <-   freep
+
+           required elements: 
+                + child inode (create new)
+                    - i_ino                         *child_ino
+                    - i_type                        S_IFREG
+                    - i_size                        0
+                    - i_uid                         user
+                    - i_gid                         group
+                    - i_mode                        mode
+                    - i_blocks                      0
+                    - i_insert                      -1
+                    - i_atime, i_mtime, i_ctime     now
+                + valid        (update)
+                    - v_entries[]                   *v_entries[child_ino] = V_VALID
+                + parent inode (update)
+                    - i_size                                +1
+                    - i_blocks (untouched OR +1,         update in the end:
+                                depends on insert val)      *= parent_insert ? i_blocks : i_blocks+1;
+                    - i_insert                              
+                                             < 0            *I_INSERT(parent_dirent_bnum(get new from freep), 1), init all other 7 entries inserts bellow in parent dirent creation
+                                             > 0         2. *pass in store next insert value as new insert: parent_direntp->entries[I_OFFSET(parent_insert)].et_insert
+                    - i_atime, i_mtime                      now
+                    - i_direct[]                            *parent_insert ? nothing : i_direct[i_blocks(updated)-1] = parent_dirent_bnum
+                        (update or assign new block, 
+                                    depends on insert val)
+                + parent dirent (update OR new) (depens on parent_insert val)
+                                    parent_insert < 0       create new parent_dirent, init all other 7 entries' inserts
+                                    parent_insert > 0       *update parent_dirent: 
+                                                         1. parent_direntp = retrieve_dirent(I_BLOCK(parent_insert), R_WR), 
+                                                         3. & add child entry -- (need filename, child_ino)
+                + vcb
+                    - vb_free update along the procedure 
+
+                + last step: 
+                    write child_inode to disk
+                    write parent_dirent to disk, if parent_insert < 0    */
+{
+
+    fprintf(stderr,"vfs_create() called\n");
+    char         m_path [strlen(path)+1]; /* mutable path for dirname(), basename() */
+
+    vcb_t       *vcbp;                      /* check */
+    free_t      *freep;                     /* check */
+    valid_t     *validp;                    /* check */
+    
+    char         dirpath[strlen(path)+1];   /* check */
+    char         filename[strlen(path)+1];  /* check */
+    entry_t      entry;                     /* check */
+
+    int          parent_ino;                /* check */
+    inode_t     *parent_inodep;             /* check */
+    insert_t     parent_insert;             /* check */
+    int          parent_dirent_bnum;        /* check */
+    dirent_t     parent_dirent;             /* check */
+    dirent_t    *parent_direntp;            /* check */
+
+    int          child_ino;                 /* check */
+    inode_t      child_inode;               /* check */
+
+    struct timespec *now;
+
+    vcbp = retrieve_vcb();                              /* vcbp */
+    freep = get_free();                                 /* freep */
+    validp = retrieve_valid(vcbp->vb_valid);            /* validp */
+
+    strcpy(m_path, path); 
+    strcpy(dirpath, dirname(m_path));                   /* dirname */
+    strcpy(m_path, path);               /* reset m_path for next call */
+    strcpy(filename, basename(m_path));                 /* filename */
+    entry.et_ino = child_ino;      
+    strcpy(entry.et_name, filename);                    /* entry */
+
+    parent_ino = find_ino(dirpath);                     /* parent_ino */
+    parent_inodep = retrieve_inode(parent_ino, R_WR);   /* parent_inodep */
+    parent_insert = parent_inodep->i_insert;            /* parent_insert */
+    if (!parent_insert){
+        parent_dirent_bnum = vcbp->vb_free;
+        if (parent_dirent_bnum < 0)
+            return -errno;                              /* parent_dirent_bnum */
+        freep = get_free();
+        vcbp->vb_free = freep->f_next;  /* update vcb free */
+
+        if (!clear_dirent(&parent_dirent, I_INSERT(parent_dirent_bnum, 0)))
+            return -errno;
+        parent_dirent.d_entries[0] = entry;             /* parent_dirent */
+        parent_direntp = &parent_dirent;                /* parent_direntp */
+    } else {
+        parent_direntp = retrieve_dirent(I_BLOCK(parent_insert), R_WR);
+                                                        /* parent_direntp */
+    }
+
+    int i;
+    for (i=1; i<VALID_TABLE_SIZE; i++){
+        if (validp->v_entries[i] == V_INVALID){
+            child_ino = i;                              
+            break;
+        }
+    }
+    if (i >= VALID_TABLE_SIZE)                          /* child_ino */
+        return -errno;
+    if (!clear_inode(&child_inode)) return -errno;
+    if (!(now = get_time()))        return -errno;
+    child_inode.i_ino  = child_ino;
+    child_inode.i_type = S_IFREG;
+    child_inode.i_size = 0;
+    child_inode.i_uid  = getuid();
+    child_inode.i_gid  = getgid();
+    child_inode.i_mode = mode;
+    child_inode.i_blocks = 0;
+    child_inode.i_insert = -1;
+    child_inode.i_atime = *now;
+    child_inode.i_mtime = *now;
+    child_inode.i_ctime = *now;                         /* child_inode */
+                                                                /* + child_inode */
+    validp->v_entries[child_ino] = V_VALID;                     /* + valid */
+
+    (parent_inodep->i_size)++;              /* i_size */
+    if (!parent_insert)
+        parent_inodep->i_blocks++;          /* i_blocks */
+    parent_inodep->i_insert = (!parent_insert)
+                            ? I_INSERT(parent_dirent_bnum, 1)
+                            : parent_direntp->d_entries[I_OFFSET(parent_insert)].et_insert;
+                                            /* i_insert */
+    parent_inodep->i_atime = *now;          
+    parent_inodep->i_mtime = *now;          /* i_atime, i_mtime */
+    if (!parent_insert)
+        parent_inodep->i_direct[parent_inodep->i_blocks - 1] = parent_dirent_bnum;
+                                            /* i_direct[] */    /* + parent_inode */
+
+    if (parent_insert)
+        parent_direntp->d_entries[I_OFFSET(parent_insert)] = entry;
+                                                                /* + parent_dirent */
+
+    if (write_struct(child_ino, &child_inode) < 0) return -errno;
+    if (write_struct(parent_dirent_bnum, parent_direntp) < 0) return -errno;
     return 0;
 }
 
@@ -397,6 +659,11 @@ static int vfs_delete(const char *path)
     return 0;
 }
 
+static int vfs_rmdir(const char *path)
+{
+    return 0;
+}
+
 /*
  * The function rename will rename a file or directory named by the
  * string 'oldpath' and rename it to the file name specified by 'newpath'.
@@ -443,6 +710,18 @@ static int vfs_chown(const char *file, uid_t uid, gid_t gid)
  */
 static int vfs_utimens(const char *file, const struct timespec ts[2])
 {
+    fprintf(stderr,"vfs_utimens() called\n");
+    int file_ino;
+    inode_t *fp;
+
+    file_ino = find_ino(file);
+    if (file_ino < 0) return -errno;
+
+    fp = retrieve_inode(file_ino, R_WR);
+    if (!fp) return -errno;
+
+    fp->i_atime = ts[0];
+    fp->i_mtime = ts[1];
 
     return 0;
 }
@@ -484,6 +763,8 @@ static struct fuse_operations vfs_oper = {
     .chown	 = vfs_chown,
     .utimens	 = vfs_utimens,
     .truncate	 = vfs_truncate,
+    .mkdir       = vfs_mkdir, 
+    .rmdir       = vfs_rmdir,
 };
 
 int main(int argc, char *argv[]) {

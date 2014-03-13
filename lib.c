@@ -34,7 +34,7 @@ format_disk(int size) /* size: total number of blocks on disk */
 	int root_dirent_block;
 	int valid_block;
 	int insert_block, insert_offset;
-	struct timespec now;
+	struct timespec *now;
 	entry_t entry;
 	dirent_t root_dirent;
 	free_t free_b;
@@ -66,7 +66,7 @@ format_disk(int size) /* size: total number of blocks on disk */
 	insert_offset = 2;
 	insert_block  = free_starter - 1;
 	root_dirent_block = insert_block;
-	if (clock_gettime(CLOCK_REALTIME, &now) == -1)
+	if (!(now = get_time()))
 		return -1;
 	inode.i_ino  = 1;
 	inode.i_type = S_IFDIR;
@@ -76,9 +76,9 @@ format_disk(int size) /* size: total number of blocks on disk */
 	inode.i_mode = 0777;
 	inode.i_blocks = 1;
 	inode.i_insert = I_INSERT(insert_block, insert_offset);
-	inode.i_atime = now;
-	inode.i_mtime = now;
-	inode.i_ctime = now;
+	inode.i_atime = *now;
+	inode.i_mtime = *now;
+	inode.i_ctime = *now;
 	inode.i_direct[0] = root_dirent_block;
 	for (int i=1; i<105; i++){
 		inode.i_direct[i] = -1;
@@ -104,15 +104,13 @@ format_disk(int size) /* size: total number of blocks on disk */
 	if (write_struct(valid_block, &valid) < 0)  /* valid table */
 		return -1;
 
+	clear_dirent(&root_dirent, I_INSERT(root_dirent_block, 0));
 	entry.et_ino = 1;
 	strcpy(entry.et_name, ".");			/* .  entry */
 	root_dirent.d_entries[0] = entry;	
 	strcpy(entry.et_name, "..");			/* .. entry */
 	root_dirent.d_entries[1] = entry;
 	entry.et_ino = 0;
-	for (int i=2; i<8; i++){
-		root_dirent.d_entries[i] = entry;	/* other entries in that data block */
-	}
 	if ( write_struct(root_dirent_block, &root_dirent) < 0 ) /* root dirent */
 		return -1;
 
@@ -178,6 +176,10 @@ retrieve_inode(int inode_num, int mode){
 		return &inode;
 	}
 	if (inode_num && last_inode_num == inode_num){
+		if (last_retrieve_mode == R_WR){
+			if (write_struct(last_inode_num, &inode) < 0)
+				return NULL;
+		}
 		last_retrieve_mode = mode;
 		return &inode; 							/* return inode in cache, 
 												if accessing the same inode */
@@ -215,6 +217,10 @@ retrieve_dirent(int blocknum, int mode)
 		return &dirent;
 	}
 	if (blocknum && last_blocknum == blocknum){
+		if (last_retrieve_mode == R_WR){
+			if (write_struct(last_blocknum, &dirent) < 0)
+				return NULL;
+		}
 		last_retrieve_mode = mode;
 		return &dirent;							/* no need to access disk 
 											   if the block is still in cache */
@@ -238,6 +244,49 @@ retrieve_dirent(int blocknum, int mode)
 	return &dirent;
 }
 
+inode_t *
+clear_inode(inode_t *dp)
+{
+	dp->i_ino = 0;
+	dp->i_type = -1;
+	dp->i_size = 0;
+	dp->i_uid = 0;
+	dp->i_gid = 0;
+	dp->i_mode = 0;
+	dp->i_blocks = 0;
+	dp->i_insert = 0;
+	for (int i=0; i<105; i++){
+		dp->i_direct[i] = -1;
+	}
+	dp->i_single = -1;
+	dp->i_double = -1;
+
+	return dp;
+}
+
+dirent_t * 
+clear_dirent(dirent_t *dirp, insert_t insert)
+{
+	entry_t entry;
+	entry.et_ino = 0;
+	
+	if (insert <= 0){
+		entry.et_insert = -1;
+		for (int i=0; i<8; i++){
+			dirp->d_entries[i] = entry;
+		}
+	} else {
+		entry.et_insert = insert;
+		for (int i=0;
+			i<8; 
+			i++, entry.et_insert++)
+		{
+			dirp->d_entries[i] = entry;
+		}
+	}
+
+	return dirp;
+}
 
 entry_t *
 step_dir(inode_t *dp)
@@ -315,6 +364,14 @@ get_free()
 	if ( read_struct(block, &freeb) < 0 )
 		return NULL;
 	return &freeb;
+}
+
+struct timespec *
+get_time(){
+	static struct timespec now;
+	if (clock_gettime(CLOCK_REALTIME, &now) == -1)
+		return NULL;
+	return &now;
 }
 
 int
@@ -540,8 +597,8 @@ print_inode(inode_t *ip){
  		  "           group: %s\n"
  		  "            mode: 0%o\n"
  		  "       direct[0]: %d\n"
- 		  "           file1: %s\n"
- 		  "           file2: %s"
+ 		  "           file1: %s %d\n"
+ 		  "           file2: %s %d"
  		  , ip->i_ino, ip->i_size, username, groupname, (int)ip->i_mode, 
- 		  ip->i_direct[0], e1.et_name, e2.et_name);
+ 		  ip->i_direct[0], e1.et_name, e1.et_ino, e2.et_name, e2.et_ino);
 }
