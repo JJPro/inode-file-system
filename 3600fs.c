@@ -165,12 +165,12 @@ static int vfs_getattr(const char *path, struct stat *stbuf) {
   else {
     if ((ino = find_ino(path)) < 0){
       debug("       invalid path");
-      return -ENOEXIST; // return -errno;
+      return -errno;
     }
   }
   if ( !(inodep = retrieve_inode(ino, R_RD)) ){
     err("       retrieve inode failed");
-    return 0; // return -errno;
+    return -errno;
   }
   stbuf->st_mode  = I_ISREG(inodep->i_type) ? 
                     inodep->i_mode | S_IFREG:
