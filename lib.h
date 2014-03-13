@@ -118,13 +118,7 @@ struct timespec *get_time();
 int      find_ino   (const char* path);
 int      path2tokens(char* path, char *** tokens); 
 			/* caller is responsible for freeing memory dynamically allocated to tokens */
-insert_t search_entry(const char* et_name, inode_t *inodep, dirent_t *dirp, entry_t *entp);
-			/* dirp and entp is statically allocated */
-// insert_t add_entry   (const char* et_name, int ino, inode_t *parentp);
-			/* add an entry (et_ino = ino, et_name = name) to the directory, 
-						whose inode is what dirp refers to.
-				Returns new insert value for the directry,
-						Or -1 on error */
+insert_t search_entry(const char* et_name, inode_t *parentp, dirent_t *direntp, entry_t *entp);
 
 int write_struct(int blocknum, void *structp);
 int read_struct (int blocknum, void *structp);
