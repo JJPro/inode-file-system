@@ -33,7 +33,7 @@ format_disk(int size) /* size: total number of blocks on disk */
 	int free_starter;
 	int root_dirent_block;
 	int valid_block;
-	int insert_block, insert_offset;
+	int insert_block;
 	struct timespec *now;
 	entry_t entry;
 	dirent_t root_dirent;
@@ -63,7 +63,6 @@ format_disk(int size) /* size: total number of blocks on disk */
 		return -1;
 	vcb_initialized = true;
 
-	insert_offset = 2;
 	insert_block  = free_starter - 1;
 	root_dirent_block = insert_block;
 	if (!(now = get_time()))
@@ -75,12 +74,11 @@ format_disk(int size) /* size: total number of blocks on disk */
 	inode.i_gid  = getgid();
 	inode.i_mode = 0777;
 	inode.i_blocks = 1;
-	inode.i_insert = I_INSERT(insert_block, insert_offset);
 	inode.i_atime = *now;
 	inode.i_mtime = *now;
 	inode.i_ctime = *now;
 	inode.i_direct[0] = root_dirent_block;
-	for (int i=1; i<105; i++){
+	for (int i=1; i<106; i++){
 		inode.i_direct[i] = -1;
 	}
 	inode.i_single = -1;
@@ -104,13 +102,12 @@ format_disk(int size) /* size: total number of blocks on disk */
 	if (write_struct(valid_block, &valid) < 0)  /* valid table */
 		return -1;
 
-	clear_dirent(&root_dirent, I_INSERT(root_dirent_block, 0));
+	clear_dirent(&root_dirent);
 	entry.et_ino = 1;
 	strcpy(entry.et_name, ".");			/* .  entry */
 	root_dirent.d_entries[0] = entry;	
 	strcpy(entry.et_name, "..");			/* .. entry */
 	root_dirent.d_entries[1] = entry;
-	entry.et_ino = 0;
 	if ( write_struct(root_dirent_block, &root_dirent) < 0 ) /* root dirent */
 		return -1;
 
@@ -254,8 +251,7 @@ clear_inode(inode_t *dp)
 	dp->i_gid = 0;
 	dp->i_mode = 0;
 	dp->i_blocks = 0;
-	dp->i_insert = 0;
-	for (int i=0; i<105; i++){
+	for (int i=0; i<106; i++){
 		dp->i_direct[i] = -1;
 	}
 	dp->i_single = -1;
@@ -265,24 +261,13 @@ clear_inode(inode_t *dp)
 }
 
 dirent_t * 
-clear_dirent(dirent_t *dirp, insert_t insert)
+clear_dirent(dirent_t *dirp)
 {
 	entry_t entry;
 	entry.et_ino = 0;
 	
-	if (insert <= 0){
-		entry.et_insert = -1;
-		for (int i=0; i<8; i++){
-			dirp->d_entries[i] = entry;
-		}
-	} else {
-		entry.et_insert = insert;
-		for (int i=0;
-			i<8; 
-			i++, entry.et_insert++)
-		{
-			dirp->d_entries[i] = entry;
-		}
+	for (int i=0; i<8; i++){
+		dirp->d_entries[i] = entry;
 	}
 
 	return dirp;

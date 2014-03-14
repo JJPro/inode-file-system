@@ -58,7 +58,7 @@ static void vfs_unmount (void *private_data);
  */
 static void* vfs_mount(struct fuse_conn_info *conn) {
   fprintf(stderr, "vfs_mount called\n");
-
+  (void) conn;
   // Do not touch or move this code; connects the disk
   dconnect();
 
@@ -97,6 +97,7 @@ static void* vfs_mount(struct fuse_conn_info *conn) {
  */
 static void vfs_unmount (void *private_data) {
   fprintf(stderr, "vfs_unmount called\n");
+  (void) private_data;
 
   /* 3600: YOU SHOULD ADD CODE HERE TO MAKE SURE YOUR ON-DISK STRUCTURES
            ARE IN-SYNC BEFORE THE DISK IS UNMOUNTED (ONLY NECESSARY IF YOU
@@ -283,7 +284,6 @@ static int vfs_mkdir(const char *path, mode_t mode)
 
     int          parent_ino;                /* check */
     inode_t     *parent_inodep;             /* check */
-    insert_t     parent_insert;             /* check */
     int          parent_dirent_bnum;        /* check */
     dirent_t     parent_dirent;             /* check */
     dirent_t    *parent_direntp;            /* check */
@@ -306,22 +306,34 @@ static int vfs_mkdir(const char *path, mode_t mode)
 
     parent_ino = find_ino(dirpath);                     /* parent_ino */
     parent_inodep = retrieve_inode(parent_ino, R_WR);   /* parent_inodep */
-    parent_insert = parent_inodep->i_insert;            /* parent_insert */
-    if (!parent_insert){
+
+    /* find a free slot */
+    bool has_free_slot = false;
+    int index;
+    for (int i=0; i<parent_inodep->i_blocks; i++){
+      dirent_t *direntp = retrieve_dirent(parent_inodep->i_direct[i], R_WR);
+      for (index=0; index<8; index++){
+          if (direntp->d_entries[index].et_ino == 0){
+              has_free_slot = true;
+              break;
+          }
+      }
+    }
+
+
+    if (!has_free_slot){
         parent_dirent_bnum = vcbp->vb_free;
         if (parent_dirent_bnum < 0)
             return -errno;                              /* parent_dirent_bnum */
         freep = get_free();
         vcbp->vb_free = freep->f_next;  /* update vcb free */
 
-        if (!clear_dirent(&parent_dirent, I_INSERT(parent_dirent_bnum, 0)))
+        if (!clear_dirent(&parent_dirent))
             return -errno;
-        entry.et_ino = child_ino;      
-        strcpy(entry.et_name, filename);
         parent_dirent.d_entries[0] = entry;             /* parent_dirent */
         parent_direntp = &parent_dirent;                /* parent_direntp */
     } else {
-        parent_direntp = retrieve_dirent(I_BLOCK(parent_insert), R_WR);
+        parent_direntp = retrieve_dirent(parent_inodep->i_direct[index], R_WR);
                                                         /* parent_direntp */
     }
 
@@ -350,14 +362,13 @@ static int vfs_mkdir(const char *path, mode_t mode)
     child_inode.i_gid  = getgid();
     child_inode.i_mode = mode;
     child_inode.i_blocks = 1;
-    child_inode.i_insert = I_INSERT(child_dirent_bnum, 2);
     child_inode.i_atime = *now;
     child_inode.i_mtime = *now;
     child_inode.i_ctime = *now;
     child_inode.i_direct[0] = child_dirent_bnum;        /* child_inode */
                                                                 /* + child_inode */
 
-    if (!clear_dirent(&child_dirent, I_INSERT(child_dirent_bnum, 0)))
+    if (!clear_dirent(&child_dirent))
         return -errno;                                  
     entry.et_ino = child_ino;
     strcpy(entry.et_name, ".");
@@ -370,22 +381,18 @@ static int vfs_mkdir(const char *path, mode_t mode)
     validp->v_entries[child_ino] = V_VALID;                     /* + valid */
 
     (parent_inodep->i_size)++;              /* i_size */
-    if (!parent_insert)
+    if (!has_free_slot)
         parent_inodep->i_blocks++;          /* i_blocks */
-    parent_inodep->i_insert = (!parent_insert)
-                            ? I_INSERT(parent_dirent_bnum, 1)
-                            : parent_direntp->d_entries[I_OFFSET(parent_insert)].et_insert;
-                                            /* i_insert */
-    // parent_inodep->i_atime = *now;          
-    // parent_inodep->i_mtime = *now;          /* i_atime, i_mtime */
-    if (!parent_insert)
+    parent_inodep->i_atime = *now;          
+    parent_inodep->i_mtime = *now;          /* i_atime, i_mtime */
+    if (!has_free_slot)
         parent_inodep->i_direct[parent_inodep->i_blocks - 1] = parent_dirent_bnum;
                                             /* i_direct[] */    /* + parent_inode */
 
     entry.et_ino = child_ino;      
     strcpy(entry.et_name, filename);
-    if (parent_insert)
-        parent_direntp->d_entries[I_OFFSET(parent_insert)] = entry;
+    if (has_free_slot)
+        parent_direntp->d_entries[index] = entry;
                                                                 /* + parent_dirent */
 
     if (write_struct(child_ino, &child_inode) < 0) return -errno;
@@ -424,6 +431,8 @@ static int vfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 {
     fprintf(stdout, "readdir called\n");
     debug("vfs_readdir()");
+    (void) fi; (void) offset;
+
     int     ino;
     inode_t *dp;
     inode_t *inodep;
@@ -516,8 +525,9 @@ static int vfs_create(const char *path, mode_t mode, struct fuse_file_info *fi)
                     write parent_dirent to disk, if parent_insert < 0    */
 {
     fprintf(stdout, "create called\n");
-
     fprintf(stderr,"vfs_create() called\n");
+    (void) fi;
+
     char         m_path [strlen(path)+1]; /* mutable path for dirname(), basename() */
 
     vcb_t       *vcbp;                      /* check */
@@ -530,7 +540,6 @@ static int vfs_create(const char *path, mode_t mode, struct fuse_file_info *fi)
 
     int          parent_ino;                /* check */
     inode_t     *parent_inodep;             /* check */
-    insert_t     parent_insert;             /* check */
     int          parent_dirent_bnum;        /* check */
     dirent_t     parent_dirent;             /* check */
     dirent_t    *parent_direntp;            /* check */
@@ -548,28 +557,6 @@ static int vfs_create(const char *path, mode_t mode, struct fuse_file_info *fi)
     strcpy(dirpath, dirname(m_path));                   /* dirname */
     strcpy(m_path, path);               /* reset m_path for next call */
     strcpy(filename, basename(m_path));                 /* filename */
-    entry.et_ino = child_ino;      
-    strcpy(entry.et_name, filename);                    /* entry */
-
-    parent_ino = find_ino(dirpath);                     /* parent_ino */
-    parent_inodep = retrieve_inode(parent_ino, R_WR);   /* parent_inodep */
-    parent_insert = parent_inodep->i_insert;            /* parent_insert */
-    if (!parent_insert){
-        parent_dirent_bnum = vcbp->vb_free;
-        if (parent_dirent_bnum < 0)
-            return -errno;                              /* parent_dirent_bnum */
-        freep = get_free();
-        vcbp->vb_free = freep->f_next;  /* update vcb free */
-
-        if (!clear_dirent(&parent_dirent, I_INSERT(parent_dirent_bnum, 0)))
-            return -errno;
-        parent_dirent.d_entries[0] = entry;             /* parent_dirent */
-        parent_direntp = &parent_dirent;                /* parent_direntp */
-    } else {
-        parent_direntp = retrieve_dirent(I_BLOCK(parent_insert), R_WR);
-                                                        /* parent_direntp */
-    }
-
     int i;
     for (i=1; i<VALID_TABLE_SIZE; i++){
         if (validp->v_entries[i] == V_INVALID){
@@ -579,6 +566,39 @@ static int vfs_create(const char *path, mode_t mode, struct fuse_file_info *fi)
     }
     if (i >= VALID_TABLE_SIZE)                          /* child_ino */
         return -errno;
+    entry.et_ino = child_ino;      
+    strcpy(entry.et_name, filename);                    /* entry */
+
+    parent_ino = find_ino(dirpath);                     /* parent_ino */
+    parent_inodep = retrieve_inode(parent_ino, R_WR);   /* parent_inodep */
+
+    /* find a free slot */
+    bool has_free_slot = false;
+    int index;
+    for (int i=0; i<parent_inodep->i_blocks; i++){
+      parent_direntp = retrieve_dirent(parent_inodep->i_direct[i], R_WR);
+                                                        /* parent_direntp */
+      for (index=0; index<8; index++){
+          if (parent_direntp->d_entries[index].et_ino == 0){
+              has_free_slot = true;
+              break;
+          }
+      }
+    }
+
+    if (!has_free_slot){
+        parent_dirent_bnum = vcbp->vb_free;
+        if (parent_dirent_bnum < 0)
+            return -errno;                              /* parent_dirent_bnum */
+        freep = get_free();
+        vcbp->vb_free = freep->f_next;  /* update vcb free */
+
+        if (!clear_dirent(&parent_dirent))
+            return -errno;
+        parent_dirent.d_entries[0] = entry;             /* parent_dirent */
+        parent_direntp = &parent_dirent;                /* parent_direntp */
+    } 
+
     if (!clear_inode(&child_inode)) return -errno;
     if (!(now = get_time()))        return -errno;
     child_inode.i_ino  = child_ino;
@@ -588,7 +608,6 @@ static int vfs_create(const char *path, mode_t mode, struct fuse_file_info *fi)
     child_inode.i_gid  = getgid();
     child_inode.i_mode = mode;
     child_inode.i_blocks = 0;
-    child_inode.i_insert = -1;
     child_inode.i_atime = *now;
     child_inode.i_mtime = *now;
     child_inode.i_ctime = *now;                         /* child_inode */
@@ -596,20 +615,16 @@ static int vfs_create(const char *path, mode_t mode, struct fuse_file_info *fi)
     validp->v_entries[child_ino] = V_VALID;                     /* + valid */
 
     (parent_inodep->i_size)++;              /* i_size */
-    if (!parent_insert)
+    if (!has_free_slot)
         parent_inodep->i_blocks++;          /* i_blocks */
-    parent_inodep->i_insert = (!parent_insert)
-                            ? I_INSERT(parent_dirent_bnum, 1)
-                            : parent_direntp->d_entries[I_OFFSET(parent_insert)].et_insert;
-                                            /* i_insert */
-    // parent_inodep->i_atime = *now;          
-    // parent_inodep->i_mtime = *now;          /* i_atime, i_mtime */
-    if (!parent_insert)
+    parent_inodep->i_atime = *now;          
+    parent_inodep->i_mtime = *now;          /* i_atime, i_mtime */
+    if (!has_free_slot)
         parent_inodep->i_direct[parent_inodep->i_blocks - 1] = parent_dirent_bnum;
                                             /* i_direct[] */    /* + parent_inode */
 
-    if (parent_insert)
-        parent_direntp->d_entries[I_OFFSET(parent_insert)] = entry;
+    if (has_free_slot)
+        parent_direntp->d_entries[index] = entry;
                                                                 /* + parent_dirent */
 
     if (write_struct(child_ino, &child_inode) < 0) return -errno;
@@ -637,10 +652,12 @@ static int vfs_read(const char *path, char *buf, size_t size, off_t offset,
                     struct fuse_file_info *fi)
 {
     fprintf(stderr, "vfs_read called\n"); (void) fi;
-    
+    (void) fi;
+
     int ino;
     inode_t *inodep;
-    int targetblock;
+    int targetblock_index;
+
     int targetblock_offset;
     char buffer[BLOCKSIZE];
     int read;
@@ -658,10 +675,10 @@ static int vfs_read(const char *path, char *buf, size_t size, off_t offset,
     if (offset > inodep->i_size)
         return 0;
 
-    if (dread(inodep->i_direct[targetblock_index], &buffer) < 0) 
+    if (dread(inodep->i_direct[targetblock_index], buffer) < 0) 
         return 0;
 
-    while (read < size){
+    while ((unsigned )read < size){
 
         if (buffer_index > (BLOCKSIZE-1)){
             /* reload the buffer with next block data */
@@ -703,83 +720,102 @@ static int vfs_write(const char *path, const char *buf, size_t size,
            MAY HAVE TO EXTEND THE FILE (ALLOCATE MORE BLOCKS TO IT). */
 
     fprintf(stderr, "vfs_write called\n"); (void) fi;
+    (void) fi;
 
     char buffer[BLOCKSIZE];
-    int buffer_index;
-    int wrtten;
+    int written;
     int ino;
     inode_t *inodep;
     int current_writing_block_index;        /* ****/
+    int in_block_offset;
     int number_of_paddings;
     int final_file_size;
     int final_blocks_in_file; 
+    vcb_t *vcbp;
 
     ino = find_ino(path);
     inodep = retrieve_inode(ino, R_WR);
     written = 0;
-    current_size = inodep->i_size;
 
-    final_file_size      = (offset+size) > inodep->i_size ? 
-                            offset+size:
+    final_file_size      = (int)(offset+size) > inodep->i_size ? 
+                            (int)offset+(int)size:
                             inodep->i_size;
     final_blocks_in_file = (ceil(final_file_size / BLOCKSIZE));
     number_of_paddings   = offset - inodep->i_size;
     if (number_of_paddings > 0){
+        /* current_writing_block_index is last block  or new block */
         current_writing_block_index = (inodep->i_size % BLOCKSIZE == 0) ?
                                         inodep->i_blocks : 
                                         inodep->i_blocks - 1;
     } else {
-        current_writing_block_index = offset % BLOCKSIZE;
+        /* no paddings, offset is within the file data */
+        current_writing_block_index = offset / BLOCKSIZE;           /* current writing block index */
+        in_block_offset = offset % BLOCKSIZE;                       /* in_block_offset */
+        dread(inodep->i_direct[current_writing_block_index], buffer); /* prepare buffer to write to */
     }
 
-    int _start = inodep->i_size;
-    int _end   = offset - 1;
-    int _offset = _start % BLOCKSIZE;
+    int blocknum;
     while (number_of_paddings > 0){
-        if (current_writing_block_index <= inodep->i_blocks -1){
+        if (in_block_offset == BLOCKSIZE){
+            current_writing_block_index++;
+            in_block_offset = 0;
+
+            /* flush current buffer to disk */
+            dwrite(blocknum, buffer);
+
+            /* assign a new data block to write to */
+            vcbp = retrieve_vcb();
+            blocknum = vcbp->vb_free;
+            free_t freeb;
+            read_struct(blocknum, &freeb);
+            vcbp->vb_free = freeb.f_next;
+        }
+        /* writing in last block */ 
+        if (current_writing_block_index == (inodep->i_blocks -1)){
             if (dread(inodep->i_direct[current_writing_block_index], buffer)<0)
                 return written;
+            in_block_offset = inodep->i_size % BLOCKSIZE;           /* buffer, in_block_offset */
         }
-        if (_offset > BLOCKSIZE-1){
-            _offset = 0;
-            if (dwrite(, )<0)
-                return written;
-            current_writing_block_index++;
-        }
-        buffer[_offset] = 0;
-        number_of_paddings--;
-        _offset++;
-    
 
+        /* writing to buffer */
+        buffer[in_block_offset] = 0;
+    
+        in_block_offset++;
+        written++;
+        number_of_paddings--;
     }
 
+    /* writing real data */
+    while (size > 0){
+        if (in_block_offset == BLOCKSIZE){
+            in_block_offset = 0;
+            current_writing_block_index++;
 
-    // if (offset > inodep->i_size){
-    //     /* fill data section (may need alloc new block to inode) with 0s 
-    //        until reach the appropriate length */
-    //     int zeros_to_be_filled = offset - inodep->i_blocks * BLOCKSIZE;
-    //     if (zeros_to_be_filled < 0){
-    //         /* read last block */
-    //         if (dread(inodep->i_direct[inodep->i_blocks-1], buffer) < 0)
-    //             return written;
-    //          fill bytes after (inodep->i_size % BLOCKSIZE) 
-    //         && before targetblock_offset with 0 
-    //         for (buffer_index = inodep->i_size % BLOCKSIZE + 1;
-    //             buffer_index < targetblock_offset;
-    //             buffer_index++){
-    //             buffer[buffer_index] = 0;
-    //         }
-    //         zeros_to_be_filled = 0;
-            
-    //     }
-    //     while (zeros_to_be_filled > 0){
+            /* flush buffer to disk */
+            dwrite(blocknum, buffer);
 
-    //     }
+            /* assign new block to continue writing */
+            vcbp = retrieve_vcb();
+            blocknum = vcbp->vb_free;
+            free_t freeb;
+            read_struct(blocknum, &freeb);
+            vcbp->vb_free = freeb.f_next;
+        }
 
-    //     while ()
-    // }
+        /* writing to buffer */
+        buffer[in_block_offset] = *buf;
 
-  return written;
+        buf++;
+        written++;
+        in_block_offset++;
+        size--;
+    }
+
+    /* update inode */
+    inodep->i_size = final_file_size;
+    inodep->i_blocks = final_blocks_in_file;
+
+    return written;
 }
 
 /**
@@ -821,7 +857,7 @@ static int vfs_delete(const char *path)
         int tofree = filep->i_direct[blocks-1];
         free_st.f_next = vcbp->vb_free;
         vcbp->vb_free = tofree;
-        write_struct(tofree, free_st);
+        write_struct(tofree, &free_st);
     }
 
     /* free file inode itself */
@@ -849,7 +885,7 @@ static int vfs_delete(const char *path)
         int tofree = dirent_bnum;
         free_st.f_next = vcbp->vb_free;
         vcbp->vb_free = tofree;
-        write_struct(tofree, free_st);
+        write_struct(tofree, &free_st);
         /* parent direct[] adjust, movements */
         if (dirp->i_direct[(dirp->i_blocks - 1)] != dirent_bnum){
             int index;
@@ -910,8 +946,9 @@ static int vfs_rename(const char *from, const char *to)
     bool samedir = (strcmp(dir_from, dir_to) == 0) ? true : false;
 
     int      dir_from_ino = find_ino(dir_from);
-    inode_t *dir_from_p = retrieve_inode(dir_from_ino);
-    int     base_from_ino = find_ino(base_from);
+    inode_t *dir_from_p = retrieve_inode(dir_from_ino, R_WR);
+
+    int dirent_bnum;
 
     if (samedir){
         dirent_t dirent;
@@ -919,11 +956,10 @@ static int vfs_rename(const char *from, const char *to)
         insert_t insert = search_entry(base_from, dir_from_p, &dirent, &entry);
         strcpy(entry.et_name, base_to);
         dirent.d_entries[I_OFFSET(insert)] = entry;
-        dwrite(I_BLOCK(insert), &dirent);
+        write_struct(I_BLOCK(insert), &dirent);
     } else {
         int      dir_to_ino = find_ino(dir_to);
-        inode_t *dir_to_p = retrieve_inode(dir_to_ino);
-        int     base_to_ino = find_ino(base_to);
+        inode_t *dir_to_p = retrieve_inode(dir_to_ino, R_WR);
         
         /* remove from old dir */
         dirent_t dirent;
@@ -947,7 +983,7 @@ static int vfs_rename(const char *from, const char *to)
             vcb_t *vcbp = retrieve_vcb();
             free_st.f_next = vcbp->vb_free;
             vcbp->vb_free = tofree;
-            write_struct(tofree, free_st);
+            write_struct(tofree, &free_st);
             /* direct[] adjust, movements */
             dirent_bnum = tofree;
             if (dir_from_p->i_direct[dir_from_p->i_blocks-1] != dirent_bnum){
@@ -965,7 +1001,7 @@ static int vfs_rename(const char *from, const char *to)
             dir_from_p->i_blocks--;
         } else {
             /* set entry ino to 0 */
-            dir_from_p->d_entries[offset].et_ino = 0;
+            dirent.d_entries[offset].et_ino = 0;
         }
 
         /* size -1 */
@@ -1001,7 +1037,7 @@ static int vfs_rename(const char *from, const char *to)
                 dirent_t dirent;
                 clear_dirent(&dirent);
                 dirent.d_entries[0] = entry;
-                dwrite(blocknum, &dirent);
+                write_struct(blocknum, &dirent);
 
                 dir_to_p->i_blocks++;
             }
@@ -1041,8 +1077,8 @@ static int vfs_chown(const char *file, uid_t uid, gid_t gid)
 {
     int ino = find_ino(file);
     inode_t *filep = retrieve_inode(ino, R_WR);
-    filep->uid = uid;
-    filep->gid = gid;
+    filep->i_uid = uid;
+    filep->i_gid = gid;
 
     return 0;
 }
@@ -1096,7 +1132,7 @@ static int vfs_truncate(const char *file, off_t offset)
         int tofree = fp->i_direct[_start];
         free_st.f_next = vcbp->vb_free;
         vcbp->vb_free = tofree;
-        write_struct(tofree, free_st);
+        write_struct(tofree, &free_st);
         /* set direct[]s to -1 */
         fp->i_direct[_start] = -1;
     }

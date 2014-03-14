@@ -51,17 +51,11 @@ typedef struct {
 	gid_t 		 	i_gid;
 	mode_t 		 	i_mode;			/* permissions, represented in octal */
 	int 			i_blocks; 		/* total number of blocks in file */
-	insert_t	 	i_insert;		/* Only for directory inode: 
-									   next dirent insertion location
-							   	   	   call get_insert_block() to retrieve 
-							   	   			the block loc
-							   	   	   call get_insert_offset() to retrieve
-							   	   	   		empty entry offset */
 	struct timespec i_atime;
 	struct timespec i_mtime;
 	struct timespec i_ctime;
 
-	int 			i_direct[105];
+	int 			i_direct[106];
 	int 			i_single;
 	int 			i_double;
 } inode_t;
@@ -101,14 +95,9 @@ dirent_t *retrieve_dirent(int blocknum, int mode);
 
 inode_t  *clear_inode(inode_t *inodep); 
 		 	/* Returns pointer or NULL on error */
-dirent_t *clear_dirent(dirent_t *dirp, insert_t initial_insert);		
-			/* second argument is insert value to first entry in dirent.
-					if this argument is given -1 or 0,
-							all entries will get insert value of -1
-					otherwise, 
-					        all entries get insert value pointer to the next entry, 
-					        except the last one get -1
-			Returns pointer or NULL on error */
+dirent_t *clear_dirent(dirent_t *dirp);		
+			/* each entry get inode_num 0, which indicates unused.
+			   Returns pointer or NULL on error */
 
 entry_t  *step_dir(inode_t *dp);
 free_t 	 *get_free();
