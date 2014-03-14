@@ -90,8 +90,8 @@ int format_disk(int size);
 vcb_t    *retrieve_vcb(); /* return vcb is statically alloced */
 inode_t  *retrieve_root();
 valid_t  *retrieve_valid();
-inode_t  *retrieve_inode(int inode_num, int mode);
-dirent_t *retrieve_dirent(int blocknum, int mode);
+inode_t  *retrieve_inode(int inode_num);
+dirent_t *retrieve_dirent(int blocknum);
 
 inode_t  *clear_inode(inode_t *inodep); 
 		 	/* Returns pointer or NULL on error */
@@ -101,6 +101,8 @@ dirent_t *clear_dirent(dirent_t *dirp);
 
 entry_t  *step_dir(inode_t *dp);
 free_t 	 *get_free();
+int      get_new_ino(); /* valid list is updated */
+int 	 get_free_blocknum(); /* vcb is updated */
 
 struct timespec *get_time();
 
@@ -108,6 +110,7 @@ int      find_ino   (const char* path);
 int      path2tokens(char* path, char *** tokens); 
 			/* caller is responsible for freeing memory dynamically allocated to tokens */
 insert_t search_entry(const char* et_name, inode_t *parentp, dirent_t *direntp, entry_t *entp);
+insert_t search_empty_slot(inode_t *parentp, dirent_t *direntp);
 
 int write_struct(int blocknum, void *structp);
 int read_struct (int blocknum, void *structp);

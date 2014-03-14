@@ -151,77 +151,24 @@ retrieve_valid(){
 	if (!cached
 	   && (read_struct(vcb.vb_valid, &valid) < 0))
 		return NULL;
+	cached = true;
 	return &valid;
 }
 
 inode_t *
-retrieve_inode(int inode_num, int mode){
+retrieve_inode(int inode_num){
 	/* Returns a pointer to specific inode, Or NULL on error */
-	static inode_t	inode;
-	static int 		last_inode_num = 0;
-	static int 		last_retrieve_mode = -1;
-
-	if (mode == R_FLUSH && last_inode_num){
-		last_retrieve_mode = R_RD;			/* set to R_RD, so that
-											the next read call returns cached copy */
-		if(write_struct(last_inode_num, &inode) < 0){
-			return NULL;
-		}
-		return &inode;
-	}
-	if (mode == R_FLUSH){
-		return &inode;
-	}
-	if (inode_num && last_inode_num == inode_num){
-		if (last_retrieve_mode == R_WR){
-			if (write_struct(last_inode_num, &inode) < 0)
-				return NULL;
-		}
-		last_retrieve_mode = mode;
-		return &inode; 							/* return inode in cache, 
-												if accessing the same inode */
-	}
-	if (last_inode_num 
-		&& (last_retrieve_mode == R_WR)
-		&& (write_struct(last_inode_num, &inode) < 0) ){
-		return NULL; 							/* flush cache to disk */
-	}
-	if ( read_struct(inode_num, &inode) < 0 )	/* load new inode to cache */
-		return NULL;
-	last_inode_num 	   = inode_num;
-	last_retrieve_mode = mode;
-	return &inode;
+	inode_t *ip = malloc (sizeof(inode_t));
+	read_struct(inode_num, ip);
+	return ip;
 }
 
 dirent_t *
-retrieve_dirent(int blocknum, int mode)
+retrieve_dirent(int blocknum)
 	/* Returns a pointer to struct dirent, Or NULL on error */
 {
 	int min_required_blocks;
-	static dirent_t dirent;
-	static int 		last_blocknum = 0;
-	static int 		last_retrieve_mode = -1;
-
-	if (mode == R_FLUSH && last_blocknum){
-		last_retrieve_mode = R_RD;			/* set to R_RD, so that
-											the next read call returns cached copy */
-		if(write_struct(last_blocknum, &dirent) < 0){
-			return NULL;
-		}
-		return &dirent;
-	}
-	if (mode == R_FLUSH){
-		return &dirent;
-	}
-	if (blocknum && last_blocknum == blocknum){
-		if (last_retrieve_mode == R_WR){
-			if (write_struct(last_blocknum, &dirent) < 0)
-				return NULL;
-		}
-		last_retrieve_mode = mode;
-		return &dirent;							/* no need to access disk 
-											   if the block is still in cache */
-	}
+ 	dirent_t * direntp = malloc(sizeof(dirent_t));
 
 	min_required_blocks = 1 			/* vcb */
 						+ I_TABLE_SIZE  /* inode table */
@@ -229,16 +176,9 @@ retrieve_dirent(int blocknum, int mode)
 						+ 1 			/* root dirent */;
 	if (blocknum < min_required_blocks-1)
 		return NULL;
-	if (last_blocknum 
-		&& (last_retrieve_mode == R_WR)
-		&& (write_struct(last_blocknum, &dirent) < 0)){
-		return NULL;							/* flush cache to disk */
-	}
-	if ( read_struct(blocknum, &dirent) < 0 )
+	if ( read_struct(blocknum, direntp) < 0 )
 		return NULL;
-	last_blocknum = blocknum;
-	last_retrieve_mode = mode;
-	return &dirent;
+	return direntp;
 }
 
 inode_t *
@@ -285,47 +225,40 @@ step_dir(inode_t *dp)
 		   		Returns the first entry in directory 	  if <dp> is given
 		   		Returns the next  entry in same directory if <dp> is NULL */
 {
-	static int 			block_index;
-	static int 			block;
 	static int 			offset;
-	static int 			dirsize;
-	static int 			c;		/* number of entries viewed */
-	static inode_t		*dpbuf;
-	static dirent_t 	*dirbuf;
+	static int 			block_index;
+	static inode_t		inode;
+	static dirent_t 	dirent;
 	static entry_t 		entry;
+	static bool 	    block_finish = false;
 
+	/* clear entry each step */
 	memset(&entry , 0, sizeof(entry_t ));
+	/* store inode on first call */
 	if (dp) {
-		memset(&dirbuf, 0, sizeof(dirent_t));
-		block_index = 0;
-		block 		= 0;
+		memcpy(&inode, dp, sizeof(inode_t));
 		offset 		= 0;
-		dirsize 	= dp->i_size;
-		c 			= 0;
+		block_index = 0;
+		/* reload dirent */
+		read_struct(inode.i_direct[block_index], &dirent);
 	}
-
-	if (c == dirsize)
-		return NULL;
-	
-	do {
-		if (offset == 8 || dp){ 				/* cache new/next dirent_t data in dirbuf */
-			if ( offset == 8 )
-				block_index++;
-			if (dp)
-				dpbuf = dp;
-			block = dpbuf->i_direct[block_index];
-			offset = 0;
-
-			dirbuf = retrieve_dirent(block, R_RD);
+	/* keep reading until it reaches a valid entry */
+	for (; block_index < inode.i_blocks; block_index++){
+		/* reload dirent */
+		if (block_finish)
+			read_struct(inode.i_direct[block_index], &dirent);
+		for (; offset < 8; offset++){
+			entry = dirent.d_entries[offset];
+			if (entry.et_ino > 0){
+				offset++;
+				return &entry;
+			}
+			block_finish = false;
 		}
-
-		entry = dirbuf->d_entries[offset];
-		offset++;
+		offset = 0;
+		block_finish = true;
 	}
-	while (entry.et_ino == 0);
-
-	c++;
-	return &entry;
+	return NULL;
 }
 
 free_t *
@@ -349,6 +282,37 @@ get_free()
 	if ( read_struct(block, &freeb) < 0 )
 		return NULL;
 	return &freeb;
+}
+
+int
+get_new_ino()
+{
+	valid_t *vap = retrieve_valid();
+	int i;
+	bool found = false;
+	for (i=1; i<I_TABLE_SIZE+1; i++){
+		if(vap->v_entries[i] == V_VALID)
+		{
+			found = true;
+			break;
+		} 
+	}
+	if (found)
+		return i;
+	else 
+		return -1; /* no inode available */
+}
+
+int 	 
+get_free_blocknum()
+{
+	vcb_t *vbp = retrieve_vcb();
+	int res = vbp->vb_free;
+	free_t freeb;
+	if (res > 0)
+		read_struct(res, &freeb);
+	vbp->vb_free = freeb.f_next;
+	return res;
 }
 
 struct timespec *
@@ -390,15 +354,18 @@ find_ino(const char *path)
 	tokenp = tokens;
 
 	int i;
+	int type = S_IFDIR; /* starts from root dir */
 	for (i=0; 
-		( i<(tokenc-1) && I_ISDIR(inodep->i_type) ); 
+		( i<(tokenc-1) && I_ISDIR(type) ); 
 		i++, tokenp++)
 	{
 		token = *tokenp;
 		if ( ( insert=search_entry(token, inodep, &dir, &ent) ) < 0 )
 			return -1;
-		if (!(inodep = retrieve_inode(ent.et_ino, R_RD)))
+		if (!(inodep = retrieve_inode(ent.et_ino)))
 			return -1;
+		type = inodep->i_type;
+		free(inodep);
 	}
 	if (i != (tokenc-1))
 		return -1;
@@ -474,11 +441,11 @@ search_entry(const char *et_name, inode_t *inodep, dirent_t *dirp, entry_t *entp
 
 	total_blocks = inodep->i_blocks;
 	for (int i=0; i<total_blocks; i++){
-		if ( !(direntp = retrieve_dirent(inodep->i_direct[i], R_RD)) )
+		if ( !(direntp = retrieve_dirent(inodep->i_direct[i])) )
 			return -2;
 		for (int j=0; j<8; j++){
 			entry = direntp->d_entries[i];
-			if ( entry.et_ino
+			if ( entry.et_ino > 0
 				&& strcmp(entry.et_name, et_name) == 0 )
 			{
 				offset = j;
@@ -487,12 +454,35 @@ search_entry(const char *et_name, inode_t *inodep, dirent_t *dirp, entry_t *entp
 			
 				*dirp = *direntp;
 				*entp = entry;
+				free(direntp);
 				return insert;
 			}
 		}
+		free(direntp);
 	}
 	return -1;
 }
+
+insert_t 
+search_empty_slot(inode_t *parentp, dirent_t *direntp)
+{
+	if (parentp->i_size == parentp->i_blocks * 8)
+		return -1;
+
+	insert_t res;
+	dirent_t dirent;
+	for (int i=0; i<parentp->i_blocks; i++){
+		read_struct(parentp->i_direct[i], &dirent);
+		for(int j=0; j<8; j++){
+			if (dirent.d_entries[j].et_ino < 0){
+				*direntp = dirent;
+				res = I_INSERT(parentp->i_direct[i], j);
+			}
+		}
+	}
+	return res;
+}
+
 
 int 
 write_struct(int blocknum, void *structp){
@@ -568,7 +558,7 @@ print_inode(inode_t *ip){
  	dirent_t *direntp;
  	entry_t  e1, e2;
 
- 	direntp = retrieve_dirent(ip->i_direct[0], R_RD);
+ 	direntp = retrieve_dirent(ip->i_direct[0]);
  	if (!direntp){
  		err("failed to retrieve dirent @ %d", ip->i_direct[0]);
  		return;
