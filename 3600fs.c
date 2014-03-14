@@ -41,10 +41,6 @@
 #include "disk.h"
 #include "lib.h"
 
-static bool vcb_needs_update  = false;
-static bool root_needs_update = false;
-static bool validation_needs_update = false;
-
 static void vfs_unmount (void *private_data);
 
 /*
@@ -81,8 +77,6 @@ static void* vfs_mount(struct fuse_conn_info *conn) {
     err("Data damaged, last umount was not friendly");
     vfs_unmount(NULL);
   }
-  vcb_needs_update  = false;
-  root_needs_update = false;
   vcbp->vb_clean = false;
 
   if (write_struct(0, vcbp) < 0)
@@ -105,21 +99,10 @@ static void vfs_unmount (void *private_data) {
   inode_t      *rootp      = retrieve_root();
   vcb_t        *vcbp       = retrieve_vcb();
   valid_t *validp = retrieve_valid();
-  if (root_needs_update 
-    && ( write_struct(1, rootp) < 0 ) ) {               /* flush root cache */
-    err("       ->updating root");
-    dunconnect();
-  }
-  if (validation_needs_update 
-    && ( write_struct(vcbp->vb_valid, validp) < 0 ) ){  /* flush valid cache */
-    err("       ->updating valid table");
-    dunconnect();
-  }
-  vcbp->vb_clean = true;              /* all writes are successful, reset clean bit */
-  if ( write_struct(0, vcbp) < 0 ) {                    /* flush vcb cache */
-    err("       ->updating vcb"); 
-    dunconnect();
-  }
+  write_struct(1, rootp);
+  write_struct(vcbp->vb_valid, validp);  /* flush valid cache */
+  vcbp->vb_clean = true;                 /* all writes are successful, reset clean bit */
+  write_struct(0, vcbp);                   /* flush vcb cache */
 
   // Do not touch or move this code; unconnects the disk
   dunconnect();
@@ -158,13 +141,12 @@ static int vfs_getattr(const char *path, struct stat *stbuf) {
   else {
     if ((ino = find_ino(path)) < 0){
       debug("       invalid path");
-      return -errno;
+      return -1;
     }
   }
   if ( !(inodep = retrieve_inode(ino)) ){
     err("       retrieve inode failed");
-    free(inodep);
-    return -errno;
+    return -1;
   }
   stbuf->st_mode  = I_ISREG(inodep->i_type) ? 
                     inodep->i_mode | S_IFREG:
@@ -206,63 +188,6 @@ static int vfs_getattr(const char *path, struct stat *stbuf) {
  * directory.
  */
 static int vfs_mkdir(const char *path, mode_t mode) 
-        /* dependences: 
-                child_dirent             <-   child_ino, parent_ino
-                
-                child_inode.i_ino        <-   child_ino
-                child_inode.i_insert     <-   child_dirent_bnum
-                child_inode.i_direct[0]  <-   child_dirent_bnum
-
-                valid.v_entries[]        <-   child_ino
-
-                parent.i_blocks          <-   parent_insert
-                parent.i_insert          <-   parent_insert, parent_dirent_bnum, parent_direntp
-                parent.i_direct[]        <-   parent_insert, parent_dirent_bnum
-
-                parent_dirent            <-   parent_insert, child_ino, filename
-     
-                vcb.vb_free              <-   freep
-
-           required elements: 
-                + child inode 
-                    - i_ino                         *child_ino
-                    - i_type                        S_IFDIR
-                    - i_size                        2
-                    - i_uid                         user
-                    - i_gid                         group
-                    - i_mode                        mode
-                    - i_blocks                      1
-                    - i_insert                      *I_INSERT(child_dirent_bnum, 2)
-                    - i_atime, i_mtime, i_ctime     now
-                    - i_direct[0]                   *child_dirent_bnum
-                + child dirent
-                    - .                             *child_ino
-                    - ..                            *parent_ino
-                + valid
-                    - v_entries[]                   *v_entries[child_ino] = V_VALID
-                + parent inode (update)
-                    - i_size                                +1
-                    - i_blocks (untouched OR +1,         update in the end:
-                                depends on insert val)      *= parent_insert ? i_blocks : i_blocks+1;
-                    - i_insert                              
-                                             < 0            *I_INSERT(parent_dirent_bnum(get new from freep), 1), init all other 7 entries inserts bellow in parent dirent creation
-                                             > 0         2. *pass in store next insert value as new insert: parent_direntp->entries[I_OFFSET(parent_insert)].et_insert
-                    - i_atime, i_mtime                      now
-                    - i_direct[]                            *parent_insert ? nothing : i_direct[i_blocks(updated)-1] = parent_dirent_bnum
-                        (update or assign new block, 
-                                    depends on insert val)
-                + parent dirent (update OR new) (depens on parent_insert val)
-                                    parent_insert < 0       create new parent_dirent, init all other 7 entries' inserts
-                                    parent_insert > 0       *update parent_dirent: 
-                                                         1. parent_direntp = retrieve_dirent(I_BLOCK(parent_insert), R_WR), 
-                                                         3. & add child entry -- (need filename, child_ino)
-                + vcb
-                    - vb_free update along the procedure 
-
-                + last step:
-                    write child_inode to disk
-                    write child_dirent to disk
-                    write parent_dirent to disk, if parent_insert < 0   */
 {
     fprintf(stdout, "mkdir called\n");
 
@@ -280,7 +205,7 @@ static int vfs_mkdir(const char *path, mode_t mode)
     int child_ino = get_new_ino();
     if (child_ino < 0){
         err("disk full");
-        return -errno;
+        return -1;
     }
     int child_dirent_bnum = get_free_blocknum();
     inode_t child_inode;
@@ -290,7 +215,7 @@ static int vfs_mkdir(const char *path, mode_t mode)
     child_inode.i_size = 2;
     child_inode.i_uid = getuid();
     child_inode.i_gid = getgid();
-    child_inode.i_mode = mode;
+    child_inode.i_mode = mode & 0x0000ffff;
     child_inode.i_blocks = 1;
     child_inode.i_atime = *now;
     child_inode.i_mtime = *now;
@@ -323,7 +248,7 @@ static int vfs_mkdir(const char *path, mode_t mode)
         int parent_dirent_bnum = get_free_blocknum();
         if (parent_dirent_bnum < 0){
             err("Disk full");
-            return -errno;
+            return -1;
         }    
         clear_dirent(&parent_dirent);
         parent_dirent.d_entries[0] = entry;
@@ -382,14 +307,14 @@ static int vfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 
     if ( ( ino = find_ino(path) ) < 0 ) {
         debug("       inode not exist for path %s", path);
-        return -errno;
+        return -1;
     }
     if ( !( dp = retrieve_inode(ino) ) ) {
         debug("       retrieve inode failed");
-        return -errno;
+        return -1;
     }
     ep = step_dir(dp);
-    if ( !(inodep = retrieve_inode(ep->et_ino)) ) return -errno;
+    if ( !(inodep = retrieve_inode(ep->et_ino)) ) return -1;
     st.st_ino = inodep->i_ino;
     st.st_mode = inodep->i_type | inodep->i_mode;
     if (filler(buf, ep->et_name, &st, 0))
@@ -398,7 +323,7 @@ static int vfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
     while ((ep = step_dir(NULL))) {
         debug("       current entry inode: %d", ep->et_ino);
         memset(&st, 0, sizeof(st));
-        if ( !(inodep = retrieve_inode(ep->et_ino)) ) return -errno;
+        if ( !(inodep = retrieve_inode(ep->et_ino)) ) return -1;
 
         st.st_ino = inodep->i_ino;
         st.st_mode = inodep->i_type | inodep->i_mode;
@@ -406,6 +331,7 @@ static int vfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
             break;
     }
 
+    free(dp);
     fprintf(stdout, "readdir() return\n");
     fprintf(stderr, "readdir() return\n");
     return 0;
@@ -417,159 +343,71 @@ static int vfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
  *
  */
 static int vfs_create(const char *path, mode_t mode, struct fuse_file_info *fi) 
-        /* dependences: 
-                valid.v_entries[]     <-   child_ino
-
-                parent.i_blocks       <-   parent_insert
-                parent.i_insert       <-   parent_dirent_bnum; parent_direntp, parent_insert
-                parent.i_direct[]     <-   parent_dirent_bnum
-
-                parent_dirent         <-   parent_insert, child_ino, filename
-
-                vcb.vb_free           <-   freep
-
-           required elements: 
-                + child inode (create new)
-                    - i_ino                         *child_ino
-                    - i_type                        S_IFREG
-                    - i_size                        0
-                    - i_uid                         user
-                    - i_gid                         group
-                    - i_mode                        mode
-                    - i_blocks                      0
-                    - i_insert                      -1
-                    - i_atime, i_mtime, i_ctime     now
-                + valid        (update)
-                    - v_entries[]                   *v_entries[child_ino] = V_VALID
-                + parent inode (update)
-                    - i_size                                +1
-                    - i_blocks (untouched OR +1,         update in the end:
-                                depends on insert val)      *= parent_insert ? i_blocks : i_blocks+1;
-                    - i_insert                              
-                                             < 0            *I_INSERT(parent_dirent_bnum(get new from freep), 1), init all other 7 entries inserts bellow in parent dirent creation
-                                             > 0         2. *pass in store next insert value as new insert: parent_direntp->entries[I_OFFSET(parent_insert)].et_insert
-                    - i_atime, i_mtime                      now
-                    - i_direct[]                            *parent_insert ? nothing : i_direct[i_blocks(updated)-1] = parent_dirent_bnum
-                        (update or assign new block, 
-                                    depends on insert val)
-                + parent dirent (update OR new) (depens on parent_insert val)
-                                    parent_insert < 0       create new parent_dirent, init all other 7 entries' inserts
-                                    parent_insert > 0       *update parent_dirent: 
-                                                         1. parent_direntp = retrieve_dirent(I_BLOCK(parent_insert), R_WR), 
-                                                         3. & add child entry -- (need filename, child_ino)
-                + vcb
-                    - vb_free update along the procedure 
-
-                + last step: 
-                    write child_inode to disk
-                    write parent_dirent to disk, if parent_insert < 0    */
 {
     fprintf(stdout, "create called\n");
     fprintf(stderr,"vfs_create() called\n");
     (void) fi;
-
-    char         m_path [strlen(path)+1]; /* mutable path for dirname(), basename() */
-
-    vcb_t       *vcbp;                      /* check */
-    free_t      *freep;                     /* check */
-    valid_t     *validp;                    /* check */
     
-    char         dirpath[strlen(path)+1];   /* check */
-    char         filename[strlen(path)+1];  /* check */
-    entry_t      entry;                     /* check */
-
-    int          parent_ino;                /* check */
-    inode_t     *parent_inodep;             /* check */
-    int          parent_dirent_bnum;        /* check */
-    dirent_t     parent_dirent;             /* check */
-    dirent_t    *parent_direntp;            /* check */
-
-    int          child_ino;                 /* check */
-    inode_t      child_inode;               /* check */
-
-    struct timespec *now;
-
-    vcbp = retrieve_vcb();                              /* vcbp */
-    freep = get_free();                                 /* freep */
-    validp = retrieve_valid(vcbp->vb_valid);            /* validp */
-
+    char         m_path [strlen(path)+1]; /* mutable path for dirname(), basename() */
+    char         parent[strlen(path)+1];   /* check */
+    char         child[strlen(path)+1];  /* check */
     strcpy(m_path, path); 
-    strcpy(dirpath, dirname(m_path));                   /* dirname */
+    strcpy(parent, dirname(m_path));                   /* dirname */
     strcpy(m_path, path);               /* reset m_path for next call */
-    strcpy(filename, basename(m_path));                 /* filename */
-    int i;
-    for (i=1; i<VALID_TABLE_SIZE; i++){
-        if (validp->v_entries[i] == V_INVALID){
-            child_ino = i;                              
-            break;
-        }
+    strcpy(child, basename(m_path));                 /* filename */
+
+    struct timespec *now = get_time();
+
+    int child_ino = get_new_ino();
+    if (child_ino < 0){
+        err("disk full");
+        return -1;
     }
-    if (i >= VALID_TABLE_SIZE)                          /* child_ino */
-        return -errno;
-    entry.et_ino = child_ino;      
-    strcpy(entry.et_name, filename);                    /* entry */
-
-    parent_ino = find_ino(dirpath);                     /* parent_ino */
-    parent_inodep = retrieve_inode(parent_ino);   /* parent_inodep */
-
-    /* find a free slot */
-    bool has_free_slot = false;
-    int index;
-    for (int i=0; i<parent_inodep->i_blocks; i++){
-      parent_direntp = retrieve_dirent(parent_inodep->i_direct[i]);
-                                                        /* parent_direntp */
-      for (index=0; index<8; index++){
-          if (parent_direntp->d_entries[index].et_ino == 0){
-              has_free_slot = true;
-              break;
-          }
-      }
-    }
-
-    if (!has_free_slot){
-        parent_dirent_bnum = vcbp->vb_free;
-        if (parent_dirent_bnum < 0)
-            return -errno;                              /* parent_dirent_bnum */
-        freep = get_free();
-        vcbp->vb_free = freep->f_next;  /* update vcb free */
-
-        if (!clear_dirent(&parent_dirent))
-            return -errno;
-        parent_dirent.d_entries[0] = entry;             /* parent_dirent */
-        parent_direntp = &parent_dirent;                /* parent_direntp */
-    } 
-
-    if (!clear_inode(&child_inode)) return -errno;
-    if (!(now = get_time()))        return -errno;
-    child_inode.i_ino  = child_ino;
+    inode_t child_inode;
+    clear_inode(&child_inode);
+    child_inode.i_ino = child_ino;
     child_inode.i_type = S_IFREG;
     child_inode.i_size = 0;
-    child_inode.i_uid  = getuid();
-    child_inode.i_gid  = getgid();
-    child_inode.i_mode = mode;
-    child_inode.i_blocks = 0;
+    child_inode.i_uid = getuid();
+    child_inode.i_gid = getgid();
+    child_inode.i_mode = mode & 0x0000ffff;
     child_inode.i_atime = *now;
     child_inode.i_mtime = *now;
-    child_inode.i_ctime = *now;                         /* child_inode */
-                                                                /* + child_inode */
-    validp->v_entries[child_ino] = V_VALID;                     /* + valid */
-
-    (parent_inodep->i_size)++;              /* i_size */
-    if (!has_free_slot)
-        parent_inodep->i_blocks++;          /* i_blocks */
-    parent_inodep->i_atime = *now;          
-    parent_inodep->i_mtime = *now;          /* i_atime, i_mtime */
-    if (!has_free_slot)
+    child_inode.i_ctime = *now;
+    write_struct(child_ino, &child_inode);
+                                            /* child inode done */
+    int parent_ino = find_ino(parent);
+    inode_t *parent_inodep = retrieve_inode(parent_ino);
+    dirent_t parent_dirent;
+    entry_t entry;
+    entry.et_ino = child_ino;
+    strcpy(entry.et_name, child);
+    int insert = search_empty_slot(parent_inodep, &parent_dirent);
+    if (insert > 0){
+        parent_dirent.d_entries[I_OFFSET(insert)] = entry;
+        write_struct(I_BLOCK(insert), &parent_dirent);
+                                            /* parent dirent - case 1 */
+    } else {
+        int parent_dirent_bnum = get_free_blocknum();
+        if (parent_dirent_bnum < 0){
+            err("Disk full");
+            return -1;
+        }    
+        clear_dirent(&parent_dirent);
+        parent_dirent.d_entries[0] = entry;
+        write_struct(parent_dirent_bnum, &parent_dirent);
+                                            /* parent dirent - case 2 */
+        parent_inodep->i_blocks++;
         parent_inodep->i_direct[parent_inodep->i_blocks - 1] = parent_dirent_bnum;
-                                            /* i_direct[] */    /* + parent_inode */
+    }
+    parent_inodep->i_size++;
+    parent_inodep->i_atime = *now;
+    parent_inodep->i_mtime = *now;
+    parent_inodep->i_ctime = *now;
+    write_struct(parent_ino, parent_inodep);
+    free(parent_inodep);
 
-    if (has_free_slot)
-        parent_direntp->d_entries[index] = entry;
-                                                                /* + parent_dirent */
-
-    if (write_struct(child_ino, &child_inode) < 0) return -errno;
-    if (write_struct(parent_dirent_bnum, parent_direntp) < 0) return -errno;
-
+    
     fprintf(stdout, "create() return\n");
     fprintf(stderr, "create() return\n");
     return 0;
@@ -676,6 +514,8 @@ static int vfs_write(const char *path, const char *buf, size_t size,
     vcb_t *vcbp;
 
     ino = find_ino(path);
+    if (ino < 0)
+        return -1;
     inodep = retrieve_inode(ino);
     written = 0;
 
@@ -720,10 +560,9 @@ static int vfs_write(const char *path, const char *buf, size_t size,
         }
 
         /* writing to buffer */
-        buffer[in_block_offset] = 0;
+        buffer[in_block_offset] = '\0';
     
         in_block_offset++;
-        written++;
         number_of_paddings--;
     }
 
@@ -1042,10 +881,10 @@ static int vfs_utimens(const char *file, const struct timespec ts[2])
     inode_t *fp;
 
     file_ino = find_ino(file);
-    if (file_ino < 0) return -errno;
+    if (file_ino < 0) return -1;
 
     fp = retrieve_inode(file_ino);
-    if (!fp) return -errno;
+    if (!fp) return -1;
 
     fp->i_atime = ts[0];
     fp->i_mtime = ts[1];
@@ -1094,12 +933,12 @@ static int vfs_truncate(const char *file, off_t offset)
     if (d_offset != 0){
         char buffer[BLOCKSIZE];
         if (dread(block_bnum, buffer) < 0)
-            return -errno;
+            return -1;
         for (; d_offset<BLOCKSIZE; d_offset++){
             buffer[d_offset] = 0;
         }
         if (dwrite(block_bnum, buffer) < 0)
-            return -errno;
+            return -1;
     }
 
     /* update inode */
