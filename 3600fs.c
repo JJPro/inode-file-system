@@ -174,8 +174,8 @@ static int vfs_getattr(const char *path, struct stat *stbuf) {
   //       ctime(&(stbuf->st_atime)),
   //       (int)stbuf->st_size,
   //       (int)stbuf->st_blocks);                     
-  fprintf(stdout, "getattr() return\n");
-  fprintf(stderr, "getattr() return\n");
+  // fprintf(stdout, "getattr() return\n");
+  // fprintf(stderr, "getattr() return\n");
   return 0;
 }
 
@@ -265,7 +265,7 @@ static int vfs_mkdir(const char *path, mode_t mode)
     free(parent_inodep);
 
     // fprintf(stdout, "mkdir() return\n");
-    fprintf(stderr, "mkdir() return\n");
+    // fprintf(stderr, "mkdir() return\n");
     return 0;
 } 
 
@@ -697,6 +697,8 @@ static int vfs_delete(const char *path)
 
 static int vfs_rmdir(const char *path)
 {
+    fprintf(stderr, "vfs_rmdir called\n");
+
     return vfs_delete(path);
 }
 
@@ -709,6 +711,8 @@ static int vfs_rmdir(const char *path)
  */
 static int vfs_rename(const char *from, const char *to)
 {
+    fprintf(stderr, "vfs_rename called\n");
+
     char m_from[strlen(from)+1];
     char dir_from[strlen(from)+1];
     char base_from[strlen(from)+1];
@@ -845,6 +849,7 @@ static int vfs_rename(const char *from, const char *to)
  */
 static int vfs_chmod(const char *file, mode_t mode)
 {
+    fprintf(stderr, "vfs_chmod called\n");
     int ino = find_ino(file);
     inode_t *filep = retrieve_inode(ino);
     filep->i_mode = (mode & 0x0000ffff);
@@ -860,6 +865,7 @@ static int vfs_chmod(const char *file, mode_t mode)
  */
 static int vfs_chown(const char *file, uid_t uid, gid_t gid)
 {
+    fprintf(stderr, "vfs_chown called\n");
     int ino = find_ino(file);
     inode_t *filep = retrieve_inode(ino);
     filep->i_uid = uid;
