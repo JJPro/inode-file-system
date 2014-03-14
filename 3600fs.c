@@ -120,7 +120,7 @@ static void vfs_unmount (void *private_data) {
  *
  */
 static int vfs_getattr(const char *path, struct stat *stbuf) {
-  fprintf(stdout, "readdir called\n");
+  // fprintf(stdout, "readdir called\n");
   fprintf(stderr, "vfs_getattr called\n");
 
   int ino;
@@ -132,7 +132,7 @@ static int vfs_getattr(const char *path, struct stat *stbuf) {
   stbuf->st_blksize = BLOCKSIZE;
 
   /* 3600: YOU MUST UNCOMMENT BELOW AND IMPLEMENT THIS CORRECTLY */
-  debug("       looking for path: %s", path);
+  // debug("       looking for path: %s", path);
   if (strcmp(path, "/") == 0 &&
       strcmp(path, "///") == 0){
     stbuf->st_mode  = 0777 | S_IFDIR;               /* is root */
@@ -140,12 +140,12 @@ static int vfs_getattr(const char *path, struct stat *stbuf) {
   }
   else {
     if ((ino = find_ino(path)) < 0){
-      debug("       invalid path");
+      // debug("       invalid path");
       return -1;
     }
   }
   if ( !(inodep = retrieve_inode(ino)) ){
-    err("       retrieve inode failed");
+    // err("       retrieve inode failed");
     return -1;
   }
   stbuf->st_mode  = I_ISREG(inodep->i_type) ? 
@@ -162,19 +162,19 @@ static int vfs_getattr(const char *path, struct stat *stbuf) {
 
   free(inodep);
 
-  debug("       ino for %s is %d", path, ino);
-  debug("       information about it: \n"
-        "              uid: %d\n"
-        "              gid: %d\n"
-        "              atime: %s\n"
-        "              size: %d\n"
-        "              blocks: %d",
-        (int)stbuf->st_uid, 
-        (int)stbuf->st_gid,
-        ctime(&(stbuf->st_atime)),
-        (int)stbuf->st_size,
-        (int)stbuf->st_blocks);                     
-  fprintf(stdout, "getattr() return\n");
+  // debug("       ino for %s is %d", path, ino);
+  // debug("       information about it: \n"
+  //       "              uid: %d\n"
+  //       "              gid: %d\n"
+  //       "              atime: %s\n"
+  //       "              size: %d\n"
+  //       "              blocks: %d",
+  //       (int)stbuf->st_uid, 
+  //       (int)stbuf->st_gid,
+  //       ctime(&(stbuf->st_atime)),
+  //       (int)stbuf->st_size,
+  //       (int)stbuf->st_blocks);                     
+  // fprintf(stdout, "getattr() return\n");
   fprintf(stderr, "getattr() return\n");
   return 0;
 }
@@ -317,8 +317,8 @@ static int vfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
     if ( !(inodep = retrieve_inode(ep->et_ino)) ) return -1;
     st.st_ino = inodep->i_ino;
     st.st_mode = inodep->i_type | inodep->i_mode;
-    if (filler(buf, ep->et_name, &st, 0))
-        return 0;
+    if (filler(buf, ep->et_name, &st, 0) != 0)
+        return -1;
 
     while ((ep = step_dir(NULL))) {
         debug("       current entry inode: %d", ep->et_ino);
@@ -327,8 +327,8 @@ static int vfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 
         st.st_ino = inodep->i_ino;
         st.st_mode = inodep->i_type | inodep->i_mode;
-        if (filler(buf, ep->et_name, &st, 0))
-            break;
+        if (filler(buf, ep->et_name, &st, 0) != 0)
+            return -1;
     }
 
     free(dp);
@@ -456,7 +456,7 @@ static int vfs_read(const char *path, char *buf, size_t size, off_t offset,
     if (dread(inodep->i_direct[targetblock_index], buffer) < 0) 
         return 0;
 
-    while ((unsigned )read < size){
+    while (read < (int)size){
 
         if (buffer_index > (BLOCKSIZE-1)){
             /* reload the buffer with next block data */

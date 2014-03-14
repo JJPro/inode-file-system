@@ -158,7 +158,7 @@ retrieve_valid(){
 inode_t *
 retrieve_inode(int inode_num){
 	/* Returns a pointer to specific inode, Or NULL on error */
-	inode_t *ip = malloc (sizeof(inode_t));
+	inode_t *ip = calloc (1, sizeof(inode_t));
 	read_struct(inode_num, ip);
 	return ip;
 }
@@ -168,7 +168,7 @@ retrieve_dirent(int blocknum)
 	/* Returns a pointer to struct dirent, Or NULL on error */
 {
 	int min_required_blocks;
- 	dirent_t * direntp = malloc(sizeof(dirent_t));
+ 	dirent_t * direntp = calloc(1, sizeof(dirent_t));
 
 	min_required_blocks = 1 			/* vcb */
 						+ I_TABLE_SIZE  /* inode table */
@@ -486,16 +486,12 @@ search_empty_slot(inode_t *parentp, dirent_t *direntp)
 
 int 
 write_struct(int blocknum, void *structp){
-	char buffer[BLOCKSIZE];
-	memcpy(buffer, structp, BLOCKSIZE);
-	return dwrite(blocknum, buffer);
+	return dwrite(blocknum, structp);
 }
 
 int 
 read_struct (int blocknum, void *structp){
-	char buffer[BLOCKSIZE];
-	int bytes_read = dread(blocknum, buffer);
-	memcpy(structp, buffer, BLOCKSIZE);
+	int bytes_read = dread(blocknum, (char *)structp);
 	return bytes_read;
 }
 
