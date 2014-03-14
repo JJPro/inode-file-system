@@ -1,0 +1,6 @@
+break vfs_getattr
+break vfs_mkdir
+break vfs_readdir
+break vfs_create
+break vfs_read
+break vfs_write
