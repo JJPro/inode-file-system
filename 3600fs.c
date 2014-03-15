@@ -60,11 +60,13 @@ static void* vfs_mount(struct fuse_conn_info *conn) {
 
   /* 3600: YOU SHOULD ADD CODE HERE TO CHECK THE CONSISTENCY OF YOUR DISK
            AND LOAD ANY DATA STRUCTURES INTO MEMORY */
+  vcb_initialized = false;
+  root_initialized = false;
+  valid_initialized = false;
+
   vcb_t *vcbp = retrieve_vcb();
   if (!vcbp) {
-    err("Mount Failed\n"
-      "Error retrieving vcb");
-    vfs_unmount(NULL);
+    vfs_unmount(NULL); /* error reading vcb */
   }
 
   if (vcbp->vb_magic != MAGIC){
@@ -161,22 +163,8 @@ static int vfs_getattr(const char *path, struct stat *stbuf) {
   stbuf->st_size    = inodep->i_size;
   stbuf->st_blocks  = inodep->i_blocks;
 
-  free(inodep);
-
-  // debug("       ino for %s is %d", path, ino);
-  // debug("       information about it: \n"
-  //       "              uid: %d\n"
-  //       "              gid: %d\n"
-  //       "              atime: %s\n"
-  //       "              size: %d\n"
-  //       "              blocks: %d",
-  //       (int)stbuf->st_uid, 
-  //       (int)stbuf->st_gid,
-  //       ctime(&(stbuf->st_atime)),
-  //       (int)stbuf->st_size,
-  //       (int)stbuf->st_blocks);                     
-  // fprintf(stdout, "getattr() return\n");
-  // fprintf(stderr, "getattr() return\n");
+  if (ino != 1)
+      free(inodep);
   return 0;
 }
 
@@ -266,7 +254,8 @@ static int vfs_mkdir(const char *path, mode_t mode)
     parent_inodep->i_mtime = *now;
     parent_inodep->i_ctime = *now;
     write_struct(parent_ino, parent_inodep);
-    free(parent_inodep);
+    if (parent_ino != 1)
+        free(parent_inodep);
 
     // fprintf(stdout, "mkdir() return\n");
     // fprintf(stderr, "mkdir() return\n");
@@ -317,15 +306,25 @@ static int vfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
     if (dp->i_type != S_IFDIR)
         return -1;       /* not a directory */
 
+    ep = step_dir(dp);
+    if (offset == 0){
+        offset++;
+        if (filler(buf, ep->et_name, NULL, offset) != 0)
+            return 0;
+    } else {
+        for(int i=1; i<offset; i++){
+            step_dir(NULL);
+        }        
+    }
     while (dp->i_size > offset) /* still have more entries in the directory */
     {
-        ep = fetch_entry(dp, offset);
+        ep = step_dir(NULL);
         offset++;
         if (filler(buf, ep->et_name, NULL, offset) != 0)
             return 0;
     }
-
-    free(dp);
+    if (ino != 1)
+        free(dp);
     return 0;
 }
 
@@ -403,7 +402,8 @@ static int vfs_create(const char *path, mode_t mode, struct fuse_file_info *fi)
     parent_inodep->i_mtime = *now;
     parent_inodep->i_ctime = *now;
     write_struct(parent_ino, parent_inodep);
-    free(parent_inodep);
+    if (parent_ino != 1)
+        free(parent_inodep);
 
     
     // fprintf(stdout, "create() return\n");
@@ -442,6 +442,11 @@ static int vfs_read(const char *path, char *buf, size_t size, off_t offset,
 
     ino = find_ino(path);
     inodep = retrieve_inode(ino);
+    if (inodep->i_type != S_IFREG){   /* not a file */
+        if (ino != 1)
+            free(inodep);
+        return -1;
+    }
     targetblock_index = (int)offset / BLOCKSIZE;
     targetblock_offset = (int)offset % BLOCKSIZE;
     read = 0;
@@ -473,7 +478,6 @@ static int vfs_read(const char *path, char *buf, size_t size, off_t offset,
         buf++;
         buffer_index++;
     }
-
     free(inodep);
 
     return read;
@@ -515,6 +519,11 @@ static int vfs_write(const char *path, const char *buf, size_t size,
     if (ino < 0)
         return -1;
     inodep = retrieve_inode(ino);
+    if (inodep->i_type != S_IFREG){
+        if (ino != 1)
+            free(inodep);
+        return -1;
+    }
     written = 0;
 
     final_file_size      = (int)(offset+size) > inodep->i_size ? 
@@ -563,7 +572,6 @@ static int vfs_write(const char *path, const char *buf, size_t size,
         in_block_offset++;
         number_of_paddings--;
     }
-
     /* writing real data */
     while (size > 0){
         if (in_block_offset == BLOCKSIZE){
@@ -591,12 +599,14 @@ static int vfs_write(const char *path, const char *buf, size_t size,
         in_block_offset++;
         size--;
     }
+    write_struct(0, vcbp);
 
     /* update inode */
     inodep->i_size = final_file_size;
     inodep->i_blocks = final_blocks_in_file;
     write_struct(ino, inodep);
-    free(inodep);
+    if (ino != 1)
+        free(inodep);
 
     return written;
 }
@@ -650,6 +660,7 @@ static int vfs_delete(const char *path)
 
     /* free file inode itself, set _ino field to 0, and mark as invalid in valid list */
     clear_inode(filep);
+    write_struct(fileino, filep);
 
     /* clear the valid bit for valid list */
     validp->v_entries[fileino] = V_UNUSED;
@@ -696,8 +707,9 @@ static int vfs_delete(const char *path)
     /* parent size -1 */
     dirp->i_size--;
     write_struct(dirino, dirp);
-
-    free(dirp);
+    write_struct(0, vcbp);
+    if (dirino != 1)
+        free(dirp);
     free(filep);
 
     return 0;
@@ -744,10 +756,12 @@ static int vfs_rmdir(const char *path)
         vcbp->vb_free = tofree;
         if (write_struct(tofree, &free_st) < 0)
             return -1;
+        blocks--;
     }
 
     /* free file inode itself, set _ino field to 0, and mark as invalid in valid list */
     clear_inode(filep);
+    write_struct(fileino, filep);
 
     /* clear the valid bit for valid list */
     validp->v_entries[fileino] = V_UNUSED;
@@ -794,8 +808,10 @@ static int vfs_rmdir(const char *path)
     /* parent size -1 */
     dirp->i_size--;
     write_struct(dirino, dirp);
+    write_struct(0, vcbp);
 
-    free(dirp);
+    if (dirino != 1)
+        free(dirp);
     free(filep);
 
     return 0;
@@ -833,6 +849,7 @@ static int vfs_rename(const char *from, const char *to)
 
     int      dir_from_ino = find_ino(dir_from);
     inode_t *dir_from_p = retrieve_inode(dir_from_ino);
+    vcb_t *vcbp;
 
     int dirent_bnum;
 
@@ -866,7 +883,7 @@ static int vfs_rename(const char *from, const char *to)
             /* remove dirent block, free it */
             int tofree = I_BLOCK(insert);
             free_t free_st;
-            vcb_t *vcbp = retrieve_vcb();
+            vcbp = retrieve_vcb();
             free_st.f_next = vcbp->vb_free;
             vcbp->vb_free = tofree;
             write_struct(tofree, &free_st);
@@ -913,7 +930,7 @@ static int vfs_rename(const char *from, const char *to)
                 dirent.d_entries[index] = entry;
             } else {
                 /* get new dirent block */
-                vcb_t *vcbp = retrieve_vcb();
+                vcbp = retrieve_vcb();
                 int blocknum = vcbp->vb_free;
                 free_t freeb;
                 read_struct(blocknum, &freeb);
@@ -931,6 +948,7 @@ static int vfs_rename(const char *from, const char *to)
         dir_to_p->i_size++;
     }
 
+    write_struct(0, vcbp);
 
 
     return 0;
@@ -953,7 +971,8 @@ static int vfs_chmod(const char *file, mode_t mode)
     inode_t *filep = retrieve_inode(ino);
     filep->i_mode = (mode & 0x0000ffff);
     write_struct(ino, filep);
-    free(filep);
+    if (ino != 1)
+        free(filep);
     return 0;
 }
 
@@ -970,7 +989,8 @@ static int vfs_chown(const char *file, uid_t uid, gid_t gid)
     filep->i_uid = uid;
     filep->i_gid = gid;
     write_struct(ino, filep);
-    free(filep);
+    if (ino != 1)
+        free(filep);
 
     return 0;
 }
@@ -995,7 +1015,8 @@ static int vfs_utimens(const char *file, const struct timespec ts[2])
     fp->i_mtime = ts[1];
 
     write_struct(file_ino, fp);
-    free(fp);
+    if (file_ino != 1)
+        free(fp);
 
     return 0;
 }
@@ -1013,6 +1034,12 @@ static int vfs_truncate(const char *file, off_t offset)
     if (ino < 0)
         return -1;
     inode_t *fp = retrieve_inode(ino);
+    if (fp->i_type != S_IFREG)
+    {
+        if (ino != 1)
+            free(fp);
+        return -1;
+    }
     if (offset > fp->i_size)
         return -1;
     if (offset == fp->i_size)
@@ -1034,6 +1061,8 @@ static int vfs_truncate(const char *file, off_t offset)
         vcbp->vb_free = bnum;
         write_struct(bnum, &free_st);
     }
+
+    write_struct(0, vcbp);
 
     /* update inode */
     fp->i_size = new_size;

@@ -12,9 +12,6 @@
 static vcb_t 	vcb;
 static inode_t 	root;
 static valid_t 	valid;
-static bool vcb_initialized = false;
-static bool root_initialized = false;
-
 
 int 
 format_disk(int size) /* size: total number of blocks on disk */
@@ -147,17 +144,19 @@ retrieve_root(){
 
 valid_t  *
 retrieve_valid(){
-	static bool cached = false;
-	if (!cached
+	if (!valid_initialized
 	   && (read_struct(vcb.vb_valid, &valid) < 0))
 		return NULL;
-	cached = true;
+	valid_initialized = true;
 	return &valid;
 }
 
 inode_t *
 retrieve_inode(int inode_num){
 	/* Returns a pointer to specific inode, Or NULL on error */
+	/* caller only free the pointer if the inode_num == 1 */
+	if (inode_num == 1)
+		return retrieve_root();
 	inode_t *ip = calloc (1, sizeof(inode_t));
 	read_struct(inode_num, ip);
 	return ip;
@@ -181,19 +180,19 @@ retrieve_dirent(int blocknum)
 	return direntp;
 }
 
-entry_t *
-fetch_entry(inode_t *dp, int offset)
-{
-	static entry_t entry;
-	dirent_t *direntp;
-	int index = offset / 8;
-	int entry_offset = offset % 8;
-	direntp = retrieve_dirent(dp->i_direct[index]);
-	entry = direntp->d_entries[entry_offset];
+// entry_t *
+// fetch_entry(inode_t *dp, int offset)
+// {
+// 	static entry_t entry;
+// 	dirent_t *direntp;
+// 	int index = offset / 8;
+// 	int entry_offset = offset % 8;
+// 	direntp = retrieve_dirent(dp->i_direct[index]);
+// 	entry = direntp->d_entries[entry_offset];
 
-	free(direntp);
-	return &entry;
-}
+// 	free(direntp);
+// 	return &entry;
+// }
 
 inode_t *
 clear_inode(inode_t *dp)
@@ -227,53 +226,53 @@ clear_dirent(dirent_t *dirp)
 	return dirp;
 }
 
-// entry_t *
-// step_dir(inode_t *dp)
-// 		/* Returns 
-// 				pointer to next entry in directory 
-// 				NULL on no more entry
-// 				NULL on error
-// 		   Description: 
-// 		   		<dp> must be provided on first call.
-// 		   		pass <dp> as NULL on subsequent calls for the same directory.
-// 		   		Returns the first entry in directory 	  if <dp> is given
-// 		   		Returns the next  entry in same directory if <dp> is NULL */
-// {
-// 	static int 			offset;
-// 	static int 			block_index;
-// 	static inode_t		inode;
-// 	static dirent_t 	dirent;
-// 	static entry_t 		entry;
-// 	static bool 	    block_finish = false;
+entry_t *
+step_dir(inode_t *dp)
+		/* Returns 
+				pointer to next entry in directory 
+				NULL on no more entry
+				NULL on error
+		   Description: 
+		   		<dp> must be provided on first call.
+		   		pass <dp> as NULL on subsequent calls for the same directory.
+		   		Returns the first entry in directory 	  if <dp> is given
+		   		Returns the next  entry in same directory if <dp> is NULL */
+{
+	static int 			offset;
+	static int 			block_index;
+	static inode_t		inode;
+	static dirent_t 	dirent;
+	static entry_t 		entry;
+	static bool 	    block_finish = false;
 
-// 	/* clear entry each step */
-// 	memset(&entry , 0, sizeof(entry_t ));
-// 	/* store inode on first call */
-// 	if (dp) {
-// 		memcpy(&inode, dp, sizeof(inode_t));
-// 		offset 		= 0;
-// 		block_index = 0;
-// 		/* reload dirent */
-// 		read_struct(inode.i_direct[block_index], &dirent);
-// 	}
-// 	/* keep reading until it reaches a valid entry */
-// 	for (; block_index < inode.i_blocks; block_index++){
-// 		/* reload dirent */
-// 		if (block_finish)
-// 			read_struct(inode.i_direct[block_index], &dirent);
-// 		for (; offset < 8; offset++){
-// 			entry = dirent.d_entries[offset];
-// 			if (entry.et_ino > 0){
-// 				offset++;
-// 				return &entry;
-// 			}
-// 			block_finish = false;
-// 		}
-// 		offset = 0;
-// 		block_finish = true;
-// 	}
-// 	return NULL;
-// }
+	/* clear entry each step */
+	memset(&entry , 0, sizeof(entry_t ));
+	/* store inode on first call */
+	if (dp) {
+		memcpy(&inode, dp, sizeof(inode_t));
+		offset 		= 0;
+		block_index = 0;
+		/* reload dirent */
+		read_struct(inode.i_direct[block_index], &dirent);
+	}
+	/* keep reading until it reaches a valid entry */
+	for (; block_index < inode.i_blocks; block_index++){
+		/* reload dirent */
+		if (block_finish)
+			read_struct(inode.i_direct[block_index], &dirent);
+		for (; offset < 8; offset++){
+			entry = dirent.d_entries[offset];
+			if (entry.et_ino > 0){
+				offset++;
+				return &entry;
+			}
+			block_finish = false;
+		}
+		offset = 0;
+		block_finish = true;
+	}
+	return NULL;
+}
 
 free_t *
 get_free()

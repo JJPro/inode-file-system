@@ -1,1 +1,1 @@
-run -s -d tmp 2> log > out
+run -s -d tmp
