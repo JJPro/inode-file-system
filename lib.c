@@ -325,6 +325,7 @@ get_free_blocknum()
 	if (res > 0)
 		read_struct(res, &freeb);
 	vbp->vb_free = freeb.f_next;
+	write_struct(0, vbp);
 	return res;
 }
 

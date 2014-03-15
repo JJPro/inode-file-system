@@ -214,6 +214,8 @@ static int vfs_mkdir(const char *path, mode_t mode)
                                             /* child inode done */
     valid_t *validp = retrieve_valid();
     validp->v_entries[child_ino] = V_USED;
+    vcb_t *vcbp = retrieve_vcb();
+    write_struct(vcbp->vb_valid, validp);
     
     int parent_ino = find_ino(parent);
     dirent_t child_dirent;
@@ -533,6 +535,7 @@ static int vfs_write(const char *path, const char *buf, size_t size,
     number_of_paddings   = offset - inodep->i_size;
     if (number_of_paddings > 0){
         /* current_writing_block_index is last block  or new block */
+        in_block_offset = inodep->i_size % BLOCKSIZE;
         current_writing_block_index = (inodep->i_size % BLOCKSIZE == 0) ?
                                         inodep->i_blocks : 
                                         inodep->i_blocks - 1;
@@ -554,10 +557,8 @@ static int vfs_write(const char *path, const char *buf, size_t size,
 
             /* assign a new data block to write to */
             vcbp = retrieve_vcb();
-            blocknum = vcbp->vb_free;
+            blocknum = get_free_blocknum();
             free_t freeb;
-            read_struct(blocknum, &freeb);
-            vcbp->vb_free = freeb.f_next;
         }
         /* writing in last block */ 
         if (current_writing_block_index == (inodep->i_blocks -1)){
@@ -599,7 +600,6 @@ static int vfs_write(const char *path, const char *buf, size_t size,
         in_block_offset++;
         size--;
     }
-    write_struct(0, vcbp);
 
     /* update inode */
     inodep->i_size = final_file_size;
@@ -848,6 +848,8 @@ static int vfs_rename(const char *from, const char *to)
     bool samedir = (strcmp(dir_from, dir_to) == 0) ? true : false;
 
     int      dir_from_ino = find_ino(dir_from);
+    if (dir_from_ino < 0)
+        return -1;
     inode_t *dir_from_p = retrieve_inode(dir_from_ino);
     vcb_t *vcbp;
 
@@ -862,6 +864,11 @@ static int vfs_rename(const char *from, const char *to)
         write_struct(I_BLOCK(insert), &dirent);
     } else {
         int      dir_to_ino = find_ino(dir_to);
+        if (dir_to_ino < 0){
+            if (dir_from_ino != 1)
+                free(dir_from_p);
+            return -1;
+        }
         inode_t *dir_to_p = retrieve_inode(dir_to_ino);
         
         /* remove from old dir */
@@ -905,47 +912,57 @@ static int vfs_rename(const char *from, const char *to)
         } else {
             /* set entry ino to 0 */
             dirent.d_entries[offset].et_ino = 0;
+            write_struct(I_BLOCK(insert), &dirent);
         }
 
         /* size -1 */
         dir_from_p->i_size--;
-
+        write_struct(dir_from_ino, dir_from_p);
+        if(dir_from_ino != 1)
+            free(dir_from_p);
 
 
         /* now add to new dir */
         strcpy(entry.et_name, base_to);
         /* find a free slot */
+        int index;
+        bool found = false;
         for (int i=0; i<dir_to_p->i_blocks; i++){
-            dirent_t *direntp = retrieve_dirent(dir_to_p->i_direct[i]);
-            int index;
-            bool found = false;
+            dirent_bnum = dir_to_p->i_direct[i];
+            dirent_t *direntp = retrieve_dirent(dirent_bnum);
             for (index=0; index<8; index++){
                 if (direntp->d_entries[index].et_ino == 0){
                     found = true;
-                    break;
+                    goto OUT;
                 }
             }
-            if (found){
-                /* add to dirent */
-                dirent.d_entries[index] = entry;
-            } else {
-                /* get new dirent block */
-                vcbp = retrieve_vcb();
-                int blocknum = vcbp->vb_free;
-                free_t freeb;
-                read_struct(blocknum, &freeb);
-                vcbp->vb_free = freeb.f_next;
-
-                /* init dirent */
-                dirent_t dirent;
-                clear_dirent(&dirent);
-                dirent.d_entries[0] = entry;
-                write_struct(blocknum, &dirent);
-
-                dir_to_p->i_blocks++;
-            }
         }
+        OUT:;
+        if (found){
+            /* add to dirent */
+            dirent.d_entries[index] = entry;
+            write_struct(dirent_bnum, &dirent);
+        } else {
+            /* get new dirent block */
+            vcbp = retrieve_vcb();
+            int blocknum = vcbp->vb_free;
+            free_t freeb;
+            read_struct(blocknum, &freeb);
+            vcbp->vb_free = freeb.f_next;
+
+            /* init dirent */
+            dirent_t dirent;
+            clear_dirent(&dirent);
+            dirent.d_entries[0] = entry;
+            write_struct(blocknum, &dirent);
+
+            dir_to_p->i_blocks++;
+        }
+
         dir_to_p->i_size++;
+        write_struct(dir_to_ino, dir_to_p);
+        if (dir_to_ino != 1)
+            free(dir_to_p);
     }
 
     write_struct(0, vcbp);
