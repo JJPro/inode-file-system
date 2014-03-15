@@ -16,8 +16,8 @@
 
 #define VALID_TABLE_SIZE 201 	/* I_TABLE_SIZE + 1 */
 #define JUNK_SIZE 		 311 	/* BLOCKSIZE - VALID_TABLE_SIZE */
-#define V_VALID 		 0		/* inode is valid */
-#define V_INVALID 		 1 		/* inode is invalid */
+#define V_USED 		 0		/* inode is valid */
+#define V_UNUSED 		 1 		/* inode is invalid */
 
 // MACROs:
 #define I_BLOCK(x)  	( (int) ( (x) >> 3 ) )			/* insert entry block */
@@ -93,13 +93,16 @@ valid_t  *retrieve_valid();
 inode_t  *retrieve_inode(int inode_num);
 dirent_t *retrieve_dirent(int blocknum);
 
+entry_t *fetch_entry(inode_t *dp, int offset);
+			/* fetch the entry at offset position from given directory */
+
 inode_t  *clear_inode(inode_t *inodep); 
 		 	/* Returns pointer or NULL on error */
 dirent_t *clear_dirent(dirent_t *dirp);		
 			/* each entry get inode_num 0, which indicates unused.
 			   Returns pointer or NULL on error */
 
-entry_t  *step_dir(inode_t *dp);
+// entry_t  *step_dir(inode_t *dp, int offset);
 free_t 	 *get_free();
 int      get_new_ino(); /* valid list is updated */
 int 	 get_free_blocknum(); /* vcb is updated */

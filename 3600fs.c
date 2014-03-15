@@ -135,22 +135,23 @@ static int vfs_getattr(const char *path, struct stat *stbuf) {
   // debug("       looking for path: %s", path);
   if (strcmp(path, "/") == 0 &&
       strcmp(path, "///") == 0){
-    stbuf->st_mode  = 0777 | S_IFDIR;               /* is root */
+    stbuf->st_mode  = (0777 & 0x0000ffff) | S_IFDIR;               /* is root */
     ino = 1;
   }
   else {
     if ((ino = find_ino(path)) < 0){
-      // debug("       invalid path");
-      return -1;
+      debug("       file/dir not found");
+      return -ENOENT;
     }
   }
   if ( !(inodep = retrieve_inode(ino)) ){
     // err("       retrieve inode failed");
     return -1;
   }
+  stbuf->st_ino   = ino;
   stbuf->st_mode  = I_ISREG(inodep->i_type) ? 
-                    inodep->i_mode | S_IFREG:
-                    inodep->i_mode | S_IFDIR;
+                    (inodep->i_mode & 0x0000ffff) | S_IFREG:
+                    (inodep->i_mode & 0x0000ffff) | S_IFDIR;
 
   stbuf->st_uid     = inodep->i_uid;
   stbuf->st_gid     = inodep->i_gid;
@@ -189,9 +190,9 @@ static int vfs_getattr(const char *path, struct stat *stbuf) {
  */
 static int vfs_mkdir(const char *path, mode_t mode) 
 {
-    // fprintf(stdout, "mkdir called\n");
+    if (find_ino(path) > 0)
+        return -EEXIST;
 
-    fprintf(stderr,"vfs_mkdir() called\n");
     char         m_path [strlen(path)+1]; /* mutable path for dirname(), basename() */
     char         parent[strlen(path)+1];   /* check */
     char         child[strlen(path)+1];  /* check */
@@ -223,6 +224,9 @@ static int vfs_mkdir(const char *path, mode_t mode)
     child_inode.i_direct[0] = child_dirent_bnum;
     write_struct(child_ino, &child_inode);
                                             /* child inode done */
+    valid_t *validp = retrieve_valid();
+    validp->v_entries[child_ino] = V_USED;
+    
     int parent_ino = find_ino(parent);
     dirent_t child_dirent;
     clear_dirent(&child_dirent);
@@ -296,14 +300,11 @@ static int vfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 {
     // fprintf(stdout, "readdir called\n");
     // debug("vfs_readdir()");
-    (void) fi; (void) offset;
+    (void) fi;
 
     int     ino;
     inode_t *dp;
-    inode_t *inodep;
     entry_t *ep;
-
-    struct stat st;
 
     if ( ( ino = find_ino(path) ) < 0 ) {
         // debug("       inode not exist for path %s", path);
@@ -313,27 +314,18 @@ static int vfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
         // debug("       retrieve inode failed");
         return -1;
     }
-    ep = step_dir(dp);
-    if ( !(inodep = retrieve_inode(ep->et_ino)) ) return -1;
-    st.st_ino = inodep->i_ino;
-    st.st_mode = inodep->i_type | inodep->i_mode;
-    if (filler(buf, ep->et_name, &st, 0) != 0)
-        return -1;
+    if (dp->i_type != S_IFDIR)
+        return -1;       /* not a directory */
 
-    while ((ep = step_dir(NULL))) {
-        // debug("       current entry inode: %d", ep->et_ino);
-        memset(&st, 0, sizeof(st));
-        if ( !(inodep = retrieve_inode(ep->et_ino)) ) return -1;
-
-        st.st_ino = inodep->i_ino;
-        st.st_mode = inodep->i_type | inodep->i_mode;
-        if (filler(buf, ep->et_name, &st, 0) != 0)
-            return -1;
+    while (dp->i_size > offset) /* still have more entries in the directory */
+    {
+        ep = fetch_entry(dp, offset);
+        offset++;
+        if (filler(buf, ep->et_name, NULL, offset) != 0)
+            return 0;
     }
 
     free(dp);
-    // fprintf(stdout, "readdir() return\n");
-    // fprintf(stderr, "readdir() return\n");
     return 0;
 }
 
@@ -347,6 +339,9 @@ static int vfs_create(const char *path, mode_t mode, struct fuse_file_info *fi)
     // fprintf(stdout, "create called\n");
     fprintf(stderr,"vfs_create() called\n");
     (void) fi;
+
+    if (find_ino(path) > 0)
+        return -EEXIST;                    /* file exists */
     
     char         m_path [strlen(path)+1]; /* mutable path for dirname(), basename() */
     char         parent[strlen(path)+1];   /* check */
@@ -376,6 +371,9 @@ static int vfs_create(const char *path, mode_t mode, struct fuse_file_info *fi)
     child_inode.i_ctime = *now;
     write_struct(child_ino, &child_inode);
                                             /* child inode done */
+    valid_t *validp = retrieve_valid();
+    validp->v_entries[child_ino] = V_USED;
+    
     int parent_ino = find_ino(parent);
     inode_t *parent_inodep = retrieve_inode(parent_ino);
     dirent_t parent_dirent;
@@ -451,10 +449,10 @@ static int vfs_read(const char *path, char *buf, size_t size, off_t offset,
     maximum_read = inodep->i_size - offset;
 
     if (offset > inodep->i_size)
-        return 0;
+        return -1;
 
     if (dread(inodep->i_direct[targetblock_index], buffer) < 0) 
-        return 0;
+        return -1;
 
     while (read < (int)size){
 
@@ -462,7 +460,7 @@ static int vfs_read(const char *path, char *buf, size_t size, off_t offset,
             /* reload the buffer with next block data */
             targetblock_index++;
             if (dread(inodep->i_direct[targetblock_index], buffer) < 0)
-                return 0;
+                return -1;
             buffer_index = 0;
         }
 
@@ -578,6 +576,8 @@ static int vfs_write(const char *path, const char *buf, size_t size,
             /* assign new block to continue writing */
             vcbp = retrieve_vcb();
             blocknum = vcbp->vb_free;
+            if (blocknum < 0)
+                return -ENOSPC;
             free_t freeb;
             read_struct(blocknum, &freeb);
             vcbp->vb_free = freeb.f_next;
@@ -627,12 +627,16 @@ static int vfs_delete(const char *path)
     valid_t *validp;
     entry_t entry;
 
+    fileino = find_ino(path);
+    if (fileino < 0)
+        return -1;    /* file not exist */
+    filep = retrieve_inode(fileino);
+    if (filep->i_type == S_IFDIR)
+        return -1;      /* path is a directory */
     vcbp = retrieve_vcb();
     validp = retrieve_valid();
     dirino = find_ino(pathname);
     dirp = retrieve_inode(dirino);
-    fileino = find_ino(path);
-    filep = retrieve_inode(fileino);
 
     /* free all data blocks taken by file */
     int blocks = filep->i_blocks;
@@ -640,14 +644,15 @@ static int vfs_delete(const char *path)
         int tofree = filep->i_direct[blocks-1];
         free_st.f_next = vcbp->vb_free;
         vcbp->vb_free = tofree;
-        write_struct(tofree, &free_st);
+        if (write_struct(tofree, &free_st) < 0)
+            return -1;
     }
 
-    /* free file inode itself */
+    /* free file inode itself, set _ino field to 0, and mark as invalid in valid list */
     clear_inode(filep);
 
     /* clear the valid bit for valid list */
-    validp->v_entries[fileino] = V_INVALID;
+    validp->v_entries[fileino] = V_UNUSED;
 
     /***** in directory ***/
     insert_t insert = search_entry(filename, dirp, &dirent, &entry);
@@ -685,12 +690,15 @@ static int vfs_delete(const char *path)
         dirp->i_blocks--;
     } else {
         dp->d_entries[offset].et_ino = 0;
+        write_struct(dirent_bnum, dp);
     }
 
     /* parent size -1 */
     dirp->i_size--;
+    write_struct(dirino, dirp);
 
-
+    free(dirp);
+    free(filep);
 
     return 0;
 }
@@ -699,7 +707,98 @@ static int vfs_rmdir(const char *path)
 {
     fprintf(stderr, "vfs_rmdir called\n");
 
-    return vfs_delete(path);
+    char m_path[strlen(path)+1];
+    char filename[strlen(path)+1];
+    char pathname[strlen(path)+1];
+    strcpy(m_path, path);
+    strcpy(filename, basename(m_path));
+    strcpy(m_path, path);
+    strcpy(pathname, dirname(m_path));
+    free_t free_st;
+
+    int fileino;
+    int dirino;
+    inode_t *filep;
+    inode_t *dirp;
+    dirent_t dirent;
+    vcb_t * vcbp;
+    valid_t *validp;
+    entry_t entry;
+
+    fileino = find_ino(path);
+    if (fileino < 0)
+        return -1;    /* file not exist */
+    filep = retrieve_inode(fileino);
+    if (filep->i_type != S_IFDIR)
+        return -1;      /* path is not a directory */
+    vcbp = retrieve_vcb();
+    validp = retrieve_valid();
+    dirino = find_ino(pathname);
+    dirp = retrieve_inode(dirino);
+
+    /* free all data blocks taken by file */
+    int blocks = filep->i_blocks;
+    while (blocks > 0){
+        int tofree = filep->i_direct[blocks-1];
+        free_st.f_next = vcbp->vb_free;
+        vcbp->vb_free = tofree;
+        if (write_struct(tofree, &free_st) < 0)
+            return -1;
+    }
+
+    /* free file inode itself, set _ino field to 0, and mark as invalid in valid list */
+    clear_inode(filep);
+
+    /* clear the valid bit for valid list */
+    validp->v_entries[fileino] = V_UNUSED;
+
+    /***** in directory ***/
+    insert_t insert = search_entry(filename, dirp, &dirent, &entry);
+    int dirent_bnum = I_BLOCK(insert);
+    int offset = I_OFFSET(insert);
+    dirent_t *dp = retrieve_dirent(dirent_bnum);
+
+    bool allclear = true;
+    for (int i=0; i<8; i++){
+        if (i == offset && (offset != 7))
+            continue;
+        if (dp->d_entries[i].et_ino != 0){
+            allclear = false;
+            break;
+        }
+    }
+    if (allclear){
+        int tofree = dirent_bnum;
+        free_st.f_next = vcbp->vb_free;
+        vcbp->vb_free = tofree;
+        write_struct(tofree, &free_st);
+        /* parent direct[] adjust, movements */
+        if (dirp->i_direct[(dirp->i_blocks - 1)] != dirent_bnum){
+            int index;
+            for (index=0; index<dirp->i_blocks; index++){
+                if (dirp->i_direct[index] == dirent_bnum)
+                    break;
+            }
+            /* move last direct[] to index position */
+            dirp->i_direct[index] = dirp->i_direct[dirp->i_blocks-1];
+        }
+        /* i_direct [last] = -1 */
+        dirp->i_direct[dirp->i_blocks-1] = -1;
+        /* parent blocks -1 */
+        dirp->i_blocks--;
+    } else {
+        dp->d_entries[offset].et_ino = 0;
+        write_struct(dirent_bnum, dp);
+    }
+
+    /* parent size -1 */
+    dirp->i_size--;
+    write_struct(dirino, dirp);
+
+    free(dirp);
+    free(filep);
+
+    return 0;
 }
 
 /*
@@ -911,40 +1010,29 @@ static int vfs_truncate(const char *file, off_t offset)
     fprintf(stderr, "vfs_truncate is called\n");
 
     int ino = find_ino(file);
+    if (ino < 0)
+        return -1;
     inode_t *fp = retrieve_inode(ino);
+    if (offset > fp->i_size)
+        return -1;
+    if (offset == fp->i_size)
+        return 0;
     vcb_t *vcbp = retrieve_vcb();
     free_t free_st;
 
     int new_size = (int) offset;
-    int new_blocks = (int) ceil(offset / BLOCKSIZE);
+    int new_blocks = (int) ceil(new_size / BLOCKSIZE);
     int num_of_blocks_removed = fp->i_blocks - new_blocks;
-    if (num_of_blocks_removed <= 0)
-        return 0;
 
     /* free data blocks */
-    int _start = new_blocks;
-    int _end = fp->i_blocks;
-    for (; _start < _end; _start++){
-        int tofree = fp->i_direct[_start];
+    while(num_of_blocks_removed > 0){
+        int index = num_of_blocks_removed + new_blocks - 1;
+        int bnum = fp->i_direct[index];
+        fp->i_direct[index] = -1;
+        
         free_st.f_next = vcbp->vb_free;
-        vcbp->vb_free = tofree;
-        write_struct(tofree, &free_st);
-        /* set direct[]s to -1 */
-        fp->i_direct[_start] = -1;
-    }
-
-    /* add trailing 0s to last block if neccesary */
-    int d_offset = new_size % BLOCKSIZE + 1;
-    int block_bnum = fp->i_direct[new_blocks-1];
-    if (d_offset != 0){
-        char buffer[BLOCKSIZE];
-        if (dread(block_bnum, buffer) < 0)
-            return -1;
-        for (; d_offset<BLOCKSIZE; d_offset++){
-            buffer[d_offset] = 0;
-        }
-        if (dwrite(block_bnum, buffer) < 0)
-            return -1;
+        vcbp->vb_free = bnum;
+        write_struct(bnum, &free_st);
     }
 
     /* update inode */

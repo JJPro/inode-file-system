@@ -95,9 +95,9 @@ format_disk(int size) /* size: total number of blocks on disk */
 			return -1;
 	}
 
-	valid.v_entries[1] = V_VALID;
+	valid.v_entries[1] = V_USED;
 	for (int i=2; i<I_TABLE_SIZE+1; i++){
-		valid.v_entries[i] = V_INVALID;
+		valid.v_entries[i] = V_UNUSED;
 	}
 	if (write_struct(valid_block, &valid) < 0)  /* valid table */
 		return -1;
@@ -181,6 +181,20 @@ retrieve_dirent(int blocknum)
 	return direntp;
 }
 
+entry_t *
+fetch_entry(inode_t *dp, int offset)
+{
+	static entry_t entry;
+	dirent_t *direntp;
+	int index = offset / 8;
+	int entry_offset = offset % 8;
+	direntp = retrieve_dirent(dp->i_direct[index]);
+	entry = direntp->d_entries[entry_offset];
+
+	free(direntp);
+	return &entry;
+}
+
 inode_t *
 clear_inode(inode_t *dp)
 {
@@ -213,53 +227,53 @@ clear_dirent(dirent_t *dirp)
 	return dirp;
 }
 
-entry_t *
-step_dir(inode_t *dp)
-		/* Returns 
-				pointer to next entry in directory 
-				NULL on no more entry
-				NULL on error
-		   Description: 
-		   		<dp> must be provided on first call.
-		   		pass <dp> as NULL on subsequent calls for the same directory.
-		   		Returns the first entry in directory 	  if <dp> is given
-		   		Returns the next  entry in same directory if <dp> is NULL */
-{
-	static int 			offset;
-	static int 			block_index;
-	static inode_t		inode;
-	static dirent_t 	dirent;
-	static entry_t 		entry;
-	static bool 	    block_finish = false;
+// entry_t *
+// step_dir(inode_t *dp)
+// 		/* Returns 
+// 				pointer to next entry in directory 
+// 				NULL on no more entry
+// 				NULL on error
+// 		   Description: 
+// 		   		<dp> must be provided on first call.
+// 		   		pass <dp> as NULL on subsequent calls for the same directory.
+// 		   		Returns the first entry in directory 	  if <dp> is given
+// 		   		Returns the next  entry in same directory if <dp> is NULL */
+// {
+// 	static int 			offset;
+// 	static int 			block_index;
+// 	static inode_t		inode;
+// 	static dirent_t 	dirent;
+// 	static entry_t 		entry;
+// 	static bool 	    block_finish = false;
 
-	/* clear entry each step */
-	memset(&entry , 0, sizeof(entry_t ));
-	/* store inode on first call */
-	if (dp) {
-		memcpy(&inode, dp, sizeof(inode_t));
-		offset 		= 0;
-		block_index = 0;
-		/* reload dirent */
-		read_struct(inode.i_direct[block_index], &dirent);
-	}
-	/* keep reading until it reaches a valid entry */
-	for (; block_index < inode.i_blocks; block_index++){
-		/* reload dirent */
-		if (block_finish)
-			read_struct(inode.i_direct[block_index], &dirent);
-		for (; offset < 8; offset++){
-			entry = dirent.d_entries[offset];
-			if (entry.et_ino > 0){
-				offset++;
-				return &entry;
-			}
-			block_finish = false;
-		}
-		offset = 0;
-		block_finish = true;
-	}
-	return NULL;
-}
+// 	/* clear entry each step */
+// 	memset(&entry , 0, sizeof(entry_t ));
+// 	/* store inode on first call */
+// 	if (dp) {
+// 		memcpy(&inode, dp, sizeof(inode_t));
+// 		offset 		= 0;
+// 		block_index = 0;
+// 		/* reload dirent */
+// 		read_struct(inode.i_direct[block_index], &dirent);
+// 	}
+// 	/* keep reading until it reaches a valid entry */
+// 	for (; block_index < inode.i_blocks; block_index++){
+// 		/* reload dirent */
+// 		if (block_finish)
+// 			read_struct(inode.i_direct[block_index], &dirent);
+// 		for (; offset < 8; offset++){
+// 			entry = dirent.d_entries[offset];
+// 			if (entry.et_ino > 0){
+// 				offset++;
+// 				return &entry;
+// 			}
+// 			block_finish = false;
+// 		}
+// 		offset = 0;
+// 		block_finish = true;
+// 	}
+// 	return NULL;
+// }
 
 free_t *
 get_free()
@@ -291,7 +305,7 @@ get_new_ino()
 	int i;
 	bool found = false;
 	for (i=1; i<I_TABLE_SIZE+1; i++){
-		if(vap->v_entries[i] == V_VALID)
+		if(vap->v_entries[i] == V_UNUSED)
 		{
 			found = true;
 			break;
@@ -327,9 +341,6 @@ int
 find_ino(const char *path)
 		/* Returns inode number Or -1 on error */
 {
-	debug("find_ino(): \n"
-		  "       looking for ino of path: %s", path);
-
 	char 		m_path[strlen(path)+1];   /* mutable string for path2tokens() */
 	int 		tokenc;
 	char 	    **tokens;
@@ -377,11 +388,6 @@ find_ino(const char *path)
 		free(*(tokens+i));
 	}
 	free(tokens);
-
-	debug("find_ino() : \n"
-		  "       ino : %d\n"
-		  "       path: %s", ent.et_ino, path);
-
 	return ent.et_ino;
 }
 
@@ -444,7 +450,7 @@ search_entry(const char *et_name, inode_t *inodep, dirent_t *dirp, entry_t *entp
 		if ( !(direntp = retrieve_dirent(inodep->i_direct[i])) )
 			return -2;
 		for (int j=0; j<8; j++){
-			entry = direntp->d_entries[i];
+			entry = direntp->d_entries[j];
 			if ( entry.et_ino > 0
 				&& strcmp(entry.et_name, et_name) == 0 )
 			{
@@ -469,14 +475,15 @@ search_empty_slot(inode_t *parentp, dirent_t *direntp)
 	if (parentp->i_size == parentp->i_blocks * 8)
 		return -1;
 
-	insert_t res;
+	insert_t res = -1;
 	dirent_t dirent;
 	for (int i=0; i<parentp->i_blocks; i++){
 		read_struct(parentp->i_direct[i], &dirent);
 		for(int j=0; j<8; j++){
-			if (dirent.d_entries[j].et_ino < 0){
+			if (dirent.d_entries[j].et_ino == 0){
 				*direntp = dirent;
 				res = I_INSERT(parentp->i_direct[i], j);
+				return res;
 			}
 		}
 	}
