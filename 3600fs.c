@@ -926,7 +926,6 @@ static int vfs_rename(const char *from, const char *to)
     if (dir_from_ino < 0)
         return -1;
     inode_t *dir_from_p = retrieve_inode(dir_from_ino);
-    vcb_t *vcbp;
 
     int dirent_bnum;
 
@@ -964,11 +963,7 @@ static int vfs_rename(const char *from, const char *to)
         if (allclear){
             /* remove dirent block, free it */
             int tofree = I_BLOCK(insert);
-            free_t free_st;
-            vcbp = retrieve_vcb();
-            free_st.f_next = vcbp->vb_free;
-            vcbp->vb_free = tofree;
-            write_struct(tofree, &free_st);
+            free_blocknum(tofree);
             /* direct[] adjust, movements */
             dirent_bnum = tofree;
             if (dir_from_p->i_direct[dir_from_p->i_blocks-1] != dirent_bnum){
@@ -1000,36 +995,23 @@ static int vfs_rename(const char *from, const char *to)
         /* now add to new dir */
         strcpy(entry.et_name, base_to);
         /* find a free slot */
-        int index;
-        bool found = false;
-        for (int i=0; i<dir_to_p->i_blocks; i++){
-            dirent_bnum = dir_to_p->i_direct[i];
-            dirent_t *direntp = retrieve_dirent(dirent_bnum);
-            for (index=0; index<8; index++){
-                if (direntp->d_entries[index].et_ino == 0){
-                    found = true;
-                    goto OUT;
-                }
-            }
-        }
-        OUT:;
-        if (found){
+        insert = search_empty_slot(dir_to_p, &dirent);
+        offset = I_OFFSET(insert);
+        dirent_bnum = I_BLOCK(insert);
+        if (insert > 0){
             /* add to dirent */
-            dirent.d_entries[index] = entry;
+            dirent.d_entries[offset] = entry;
             write_struct(dirent_bnum, &dirent);
         } else {
             /* get new dirent block */
-            vcbp = retrieve_vcb();
-            int blocknum = vcbp->vb_free;
-            free_t freeb;
-            read_struct(blocknum, &freeb);
-            vcbp->vb_free = freeb.f_next;
-
+            dirent_bnum = get_free_blocknum();
+            if (dirent_bnum < 0)
+                return -ENOSPC;
             /* init dirent */
             dirent_t dirent;
             clear_dirent(&dirent);
             dirent.d_entries[0] = entry;
-            write_struct(blocknum, &dirent);
+            write_struct(dirent_bnum, &dirent);
 
             dir_to_p->i_blocks++;
         }
@@ -1039,9 +1021,6 @@ static int vfs_rename(const char *from, const char *to)
         if (dir_to_ino != 1)
             free(dir_to_p);
     }
-
-    write_struct(0, vcbp);
-
 
     return 0;
 }
@@ -1136,25 +1115,20 @@ static int vfs_truncate(const char *file, off_t offset)
         return -1;
     if (offset == fp->i_size)
         return 0;
-    vcb_t *vcbp = retrieve_vcb();
-    free_t free_st;
 
     int new_size = (int) offset;
     int new_blocks = (int) ceil((double)new_size / BLOCKSIZE);
-    int num_of_blocks_removed = fp->i_blocks - new_blocks;
+    int num_of_blocks_to_be_removed = fp->i_blocks - new_blocks;
 
     /* free data blocks */
-    while(num_of_blocks_removed > 0){
-        int index = num_of_blocks_removed + new_blocks - 1;
+    while(num_of_blocks_to_be_removed > 0){
+        int index = num_of_blocks_to_be_removed + new_blocks - 1;
         int bnum = fp->i_direct[index];
         fp->i_direct[index] = -1;
         
-        free_st.f_next = vcbp->vb_free;
-        vcbp->vb_free = bnum;
-        write_struct(bnum, &free_st);
+        free_blocknum(bnum);
+        num_of_blocks_to_be_removed--;        
     }
-
-    write_struct(0, vcbp);
 
     /* update inode */
     fp->i_size = new_size;

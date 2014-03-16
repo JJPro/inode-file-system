@@ -69,8 +69,7 @@ typedef struct {
 
 typedef struct {
 	int  	  et_ino;
-	char 	  et_name[56];
-	insert_t  et_insert;
+	char 	  et_name[60];
 } entry_t;
 
 typedef struct {
@@ -109,6 +108,7 @@ entry_t  *step_dir(inode_t *dp);
 free_t 	 *get_free();
 int      get_new_ino(); /* valid list is updated */
 int 	 get_free_blocknum(); /* vcb is updated */
+int 	free_blocknum(int blocknum); /* vcb is updated */
 
 struct timespec *get_time();
 

@@ -329,6 +329,19 @@ get_free_blocknum()
 	return res;
 }
 
+int
+free_blocknum(int blocknum)
+{
+	vcb_t *vcbp = retrieve_vcb();
+	free_t freeb;
+	freeb.f_next = vcbp->vb_free;
+	if (write_struct(blocknum, &freeb) < 0)
+		return -1;
+	vcbp->vb_free = blocknum;
+	write_struct(0, vcbp);
+	return 0;
+}
+
 struct timespec *
 get_time(){
 	static struct timespec now;
