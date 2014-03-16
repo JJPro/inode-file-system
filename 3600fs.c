@@ -731,14 +731,26 @@ static int vfs_delete(const char *path)
         return -1;
 
     /* free all data blocks taken by file */
-    int blocks = filep->i_blocks;
-    while (blocks > 0){
-        int tofree = filep->i_direct[blocks-1];
-        free_st.f_next = vcbp->vb_free;
-        vcbp->vb_free = tofree;
-        if (write_struct(tofree, &free_st) < 0)
-            return -1;
-        blocks--;
+    int index= 0;
+    int blocknum;
+    while((blocknum=get_data_blocknum(filep, index)) > 0){
+        index++;
+        free_blocknum(blocknum);
+    }
+    if (filep->i_single > 0){
+        free_blocknum(filep->i_single);
+    }
+    if (filep->i_double > 0){
+        indirect_t double_indirect;
+        read_struct(filep->i_double, &double_indirect);
+        for (int i=0; i<128; i++){
+            if (double_indirect.index[i] > 0){
+                free_blocknum(double_indirect.index[i]);
+            } else {
+                break;
+            }
+        }
+        free_blocknum(filep->i_double);
     }
 
     /* free file inode itself, set _ino field to 0, and mark as invalid in valid list */

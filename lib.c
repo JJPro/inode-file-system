@@ -340,18 +340,19 @@ free_blocknum(int blocknum)
 
 int 
 get_data_blocknum(inode_t *inodep, int index)
-		/* give me the block num that contains the nth block of the data 
-		Returns the found block number */
+		/* give me the block num that contains the data at index
+		Returns the found block number
+		or -1 on error or not found */
 {
-	if (index < 106){
+	if (index < 106 && inodep->i_blocks >= (index+1)){
 		return inodep->i_direct[index];
-	} else if (index < 128) {
+	} else if (index < 128 && inodep->i_blocks >= (index + 2)) {
 		int single = inodep->i_single;
 		indirect_t indirect;
 		read_struct(single, &indirect);
 		int offset = (index - 106) % 128;
 		return indirect.index[offset];
-	} else {
+	} else if (inodep->i_blocks >= (index + 3 + ceil((double)(index-233)/128))) {
 		int outter_off = (index - 234) / 128;
 		int inner_off = (index - 234) % 128;
 		indirect_t outter_indirect;
@@ -360,6 +361,8 @@ get_data_blocknum(inode_t *inodep, int index)
 		read_struct(double_indirect, &double_block);
 		read_struct(double_block.index[outter_off], &outter_indirect);
 		return outter_indirect.index[inner_off];
+	} else {
+		return -1;
 	}
 }
 
