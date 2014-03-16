@@ -462,20 +462,20 @@ static int vfs_read(const char *path, char *buf, size_t size, off_t offset,
         buffer_offset = offset % BLOCKSIZE;
         int bytes_remaining_in_block = BLOCKSIZE - buffer_offset;
         if ((int)size <= bytes_remaining_in_block){
-            memcpy(buf, buffer+buffer_offset, size);
+            memcpy(buf+read, buffer+buffer_offset, size);
             read += size;
             free(buffer);
             free(inodep);
             return read;
         } else {
-            memcpy(buf, buffer+buffer_offset, bytes_remaining_in_block);
+            memcpy(buf+read, buffer+buffer_offset, bytes_remaining_in_block);
             available -= bytes_remaining_in_block;
             i_direct_index++;
             read += bytes_remaining_in_block;
             size -= bytes_remaining_in_block;
         }
     }
-    while( (int)size >= BLOCKSIZE && (int)size <= available){
+    while( (int)size >= BLOCKSIZE && available >= BLOCKSIZE){
         available -= BLOCKSIZE;
         size -= BLOCKSIZE;
         blocknum = inodep->i_direct[i_direct_index];
@@ -488,11 +488,11 @@ static int vfs_read(const char *path, char *buf, size_t size, off_t offset,
         /* read the rest bytes */
         if ((int)size <= available){
             dread(blocknum, buffer);
-            memcpy(buf, buffer, size);
+            memcpy(buf+read, buffer, size);
             read += size;
         } else {
             dread(blocknum, buffer);
-            memcpy(buf, buffer, available);
+            memcpy(buf+read, buffer, available);
             read += available;    
         }
     }
@@ -545,6 +545,7 @@ static int vfs_write(const char *path, const char *buf, size_t size,
     int buffer_offset = 0;
     int i_direct_index = offset / BLOCKSIZE;
     int blocknum;
+    int current_blocks = inodep->i_blocks;
 
     int final_size = (ori_size < ((int)offset + (int)size)) ? ((int)offset + (int)size) : ori_size;
     int final_blocks = ceil((double)final_size / BLOCKSIZE);
@@ -576,6 +577,7 @@ static int vfs_write(const char *path, const char *buf, size_t size,
             blocknum = get_free_blocknum();
             if (blocknum<0)
                 return -ENOSPC;
+            current_blocks++;
             inodep->i_direct[i_direct_index] = blocknum;
             i_direct_index++;
             memset(buffer, 0, BLOCKSIZE);
@@ -586,6 +588,7 @@ static int vfs_write(const char *path, const char *buf, size_t size,
             blocknum = get_free_blocknum();
             if (blocknum<0)
                 return -ENOSPC;
+            current_blocks++;
             inodep->i_direct[i_direct_index] = blocknum;
             memset(buffer, 0, trailings);
             append_to_buffer = true;
@@ -610,11 +613,12 @@ static int vfs_write(const char *path, const char *buf, size_t size,
                     return -1;
                 written += size;
             } else {
-                memcpy(buffer+buffer_offset, buf, BLOCKSIZE);
+                memcpy(buffer+buffer_offset, buf, bytes_remaining_in_block);
                 if (dwrite(blocknum, buffer) < 0)
                     return -1;
                 written += BLOCKSIZE;
                 i_direct_index++;
+                size -= bytes_remaining_in_block;
             }
         } else {
             buffer_offset = offset % BLOCKSIZE;
@@ -637,29 +641,32 @@ static int vfs_write(const char *path, const char *buf, size_t size,
         }
     }
     while ((int)size > BLOCKSIZE){
-        if (written+offset >= BLOCKSIZE * inodep->i_blocks){
+        if (written+offset >= BLOCKSIZE * current_blocks){
             blocknum = get_free_blocknum();
             if (blocknum<0)
                 return -ENOSPC;
+            current_blocks++;
             inodep->i_direct[i_direct_index] = blocknum;
             if (dwrite(blocknum, (char*)buf+written)<0)
                 return -1;
             i_direct_index++;
             written += BLOCKSIZE;
+            size -= BLOCKSIZE;
         } else {
             blocknum = inodep->i_direct[i_direct_index];
             if (dwrite(blocknum, (char*)buf+written)<0)
                 return -1;
             i_direct_index++;
             written += BLOCKSIZE;
+            size -= BLOCKSIZE;
         }
     }
     if (size > 0){
-        if ((ori_size == 0)
-            || (written+offset >= BLOCKSIZE * inodep->i_blocks)){
+        if (written+offset >= BLOCKSIZE * current_blocks){
             blocknum = get_free_blocknum();
             if (blocknum<0)
                 return -ENOSPC;
+            current_blocks++;
             inodep->i_direct[i_direct_index] = blocknum;
             memset(buffer, 0, BLOCKSIZE);
             memcpy(buffer, buf+written, size);
