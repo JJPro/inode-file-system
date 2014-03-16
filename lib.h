@@ -1,4 +1,3 @@
-// #define _POSIX_C_SOURCE 199309 	/* clock_gettime() */
 #include <time.h>				/* struct timespec */
 #include <unistd.h>				/* gid_t, uid_t, mode_t */
 #include <sys/types.h>
@@ -7,7 +6,7 @@
 #define MAGIC 8876318
 #define I_TABLE_SIZE 200
 
-#define MAX_FILENAME_LENGTH 56	/* see declaration of entry_t for why it must be this value */
+#define MAX_FILENAME_LENGTH 60	/* see declaration of entry_t for why it must be this value */
 #define MAX_DIR_DEPTH		10
 
 #define R_RD	1				/* retrieve functions mode: retrieve for read */
