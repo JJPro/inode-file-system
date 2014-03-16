@@ -212,6 +212,15 @@ clear_dirent(dirent_t *dirp)
 	return dirp;
 }
 
+indirect_t *
+clear_indirect(indirect_t *indirectp)
+{
+	for (int i=0; i<128; i++){
+		indirectp->index[i] = -1;
+	}
+	return indirectp;
+}
+
 entry_t *
 step_dir(inode_t *dp)
 		/* Returns 
@@ -326,6 +335,115 @@ free_blocknum(int blocknum)
 	vcbp->vb_free = blocknum;
 	write_struct(0, vcbp);
 	return 0;
+}
+
+int 
+get_data_blocknum(inode_t *inodep, int index)
+		/* give me the block num that contains the nth block of the data 
+		Returns the found block number */
+{
+	if (index < 106){
+		return inodep->i_direct[index];
+	} else if (index < 128) {
+		int single = inodep->i_single;
+		indirect_t indirect;
+		read_struct(single, &indirect);
+		int offset = (index - 106) % 128;
+		return indirect.index[offset];
+	} else {
+		int outter_off = (index - 234) / 128;
+		int inner_off = (index - 234) % 128;
+		indirect_t outter_indirect;
+		indirect_t double_block;
+		int double_indirect = inodep->i_double;
+		read_struct(double_indirect, &double_block);
+		read_struct(double_block.index[outter_off], &outter_indirect);
+		return outter_indirect.index[inner_off];
+	}
+}
+
+int 
+add_data_block(inode_t *inodep, int blocknum)
+		/* add this blocknum to the direct or indirects of the inodep 
+		Returns 0 on success, -1 on error */
+{
+	int blocks = inodep->i_blocks;
+	if (blocks < 106){
+		inodep->i_direct[blocks] = blocknum;
+		inodep->i_blocks++;
+		return 0;
+	} else if (blocks < 235) {
+		int single = inodep->i_single;
+		indirect_t single_indrect;
+		if (blocks == 106){
+			/* add single indirect first */
+			single = get_free_blocknum();
+			if (single < 0)
+				return -1;
+			inodep->i_blocks++;
+			inodep->i_single = single;
+			clear_indirect(&single_indrect);
+		}
+		/* add blocknum */
+		read_struct(single, &single_indrect);
+		single_indrect.index[blocks +1] = blocknum;
+		if (write_struct(single, &single_indrect) < 0)
+			return -1;
+		inodep->i_blocks++;
+		return 0;
+	} else {
+		int double_i = inodep->i_double;
+		int inner_i;
+		indirect_t double_indirect;
+		indirect_t inner_indirect;
+		int size_in_double = inodep->i_size - BLOCKSIZE * 106 - BLOCKSIZE * 128;
+		int outter_off = size_in_double / (BLOCKSIZE * 128);
+		int inner_off = size_in_double % (BLOCKSIZE * 128);;
+		if (blocks == 235){
+			/* add double indirect block */
+			double_i = get_free_blocknum();
+			if (double_i < 0)
+				return -1;
+			inodep->i_blocks++;
+			inodep->i_double = double_i;
+			clear_indirect(&double_indirect);
+			inner_i = get_free_blocknum();
+			if (inner_i< 0)
+				return -1;
+			inodep->i_blocks++;
+			double_indirect.index[0] = inner_i;
+			clear_indirect(&inner_indirect);
+			inner_indirect.index[0] = blocknum;
+			inodep->i_blocks++;
+			if (write_struct(double_i, &double_indirect) < 0)
+				return -1;
+			if (write_struct(inner_i, &inner_indirect) < 0)
+				return -1;
+			return 0;
+		} 
+		else if ((blocks - 236) % 128 == 0){
+			inner_i = get_free_blocknum();
+			if (inner_i < 0)
+				return -1;
+			read_struct(double_i, &double_indirect);
+			double_indirect.index[outter_off] = inner_i;
+			inodep->i_blocks++;
+			clear_indirect(&inner_indirect);
+			if (write_struct(inner_i, &double_indirect) < 0)
+				return -1;
+			return 0;
+		} 
+		else {
+			read_struct(double_i, &double_indirect);
+			inner_i = double_indirect.index[outter_off];
+			read_struct(inner_i, &inner_indirect);
+			inner_indirect.index[inner_off] = blocknum;
+			if (write_struct(inner_i, &inner_indirect) < 0)
+				return -1;
+			inodep->i_blocks++;
+			return 0;	
+		}
+	}
 }
 
 struct timespec *

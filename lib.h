@@ -102,12 +102,16 @@ inode_t  *clear_inode(inode_t *inodep);
 dirent_t *clear_dirent(dirent_t *dirp);		
 			/* each entry get inode_num 0, which indicates unused.
 			   Returns pointer or NULL on error */
+indirect_t *clear_indirect(indirect_t *indirectp);
 
 entry_t  *step_dir(inode_t *dp);
 free_t 	 *get_free();
 int      get_new_ino(); /* valid list is updated */
 int 	 get_free_blocknum(); /* vcb is updated */
 int 	free_blocknum(int blocknum); /* vcb is updated */
+
+int 	get_data_blocknum(inode_t *inodep, int index);  /* give me the block num that contains the index[th](starting with 0) block of the data */
+int 	add_data_block(inode_t *inodep, int blocknum); /* add this blocknum to the direct or indirects of the inodep */
 
 struct timespec *get_time();
 
