@@ -432,56 +432,67 @@ static int vfs_read(const char *path, char *buf, size_t size, off_t offset,
     fprintf(stderr, "vfs_read called\n"); (void) fi;
     (void) fi;
 
-    int ino;
-    inode_t *inodep;
-    int targetblock_index;
-
-    int targetblock_offset;
-    char buffer[BLOCKSIZE];
-    int read;
-    int maximum_read;
-    int buffer_index;
-
-    ino = find_ino(path);
-    inodep = retrieve_inode(ino);
-    if (inodep->i_type != S_IFREG){   /* not a file */
+    int ino = find_ino(path);
+    if (ino < 0)
+        return -1;
+    inode_t *inodep = retrieve_inode(ino);
+    if (inodep->i_type != S_IFREG){
         if (ino != 1)
             free(inodep);
         return -1;
     }
-    targetblock_index = (int)offset / BLOCKSIZE;
-    targetblock_offset = (int)offset % BLOCKSIZE;
-    read = 0;
-    buffer_index = targetblock_offset;
-    maximum_read = inodep->i_size - offset;
-
-    if (offset > inodep->i_size)
+    int f_size = inodep->i_size;
+    if (offset > f_size)
         return -1;
+    if (offset == f_size)
+        return 0;
+    int available = f_size - offset;
 
-    if (dread(inodep->i_direct[targetblock_index], buffer) < 0) 
-        return -1;
+    char *buffer = (char *) malloc(BLOCKSIZE);
+    int read = 0;
+    int buffer_offset = -1;
+    int blocknum;
+    int i_direct_index = offset / BLOCKSIZE;
 
-    while (read < (int)size){
+    bool within_block = ((offset % BLOCKSIZE) > 0);
 
-        if (buffer_index > (BLOCKSIZE-1)){
-            /* reload the buffer with next block data */
-            targetblock_index++;
-            if (dread(inodep->i_direct[targetblock_index], buffer) < 0)
-                return -1;
-            buffer_index = 0;
+    if (within_block){
+        blocknum = inodep->i_direct[i_direct_index];
+        dread(blocknum, buffer);
+        buffer_offset = offset % BLOCKSIZE;
+        int bytes_remaining_in_block = BLOCKSIZE - buffer_offset;
+        if ((int)size <= bytes_remaining_in_block){
+            memcpy(buf, buffer+buffer_offset, size);
+            read += size;
+            free(buffer);
+            free(inodep);
+            return read;
+        } else {
+            memcpy(buf, buffer+buffer_offset, bytes_remaining_in_block);
+            available -= bytes_remaining_in_block;
+            i_direct_index++;
+            read += bytes_remaining_in_block;
+            size -= bytes_remaining_in_block;
         }
-
-        *buf = buffer[targetblock_offset + read];
-
-        read++;
-        if (read >= maximum_read)
-            break;
-        
-        buf++;
-        buffer_index++;
     }
-    free(inodep);
+    while( (int)size >= BLOCKSIZE && (int)size <= available){
+        available -= BLOCKSIZE;
+        size -= BLOCKSIZE;
+        blocknum = inodep->i_direct[i_direct_index];
+        dread(blocknum, buf+read);
+        i_direct_index++;
+        read += BLOCKSIZE;  
+    }
+    if ((int)size > 0 && (int)size <= available){
+        /* read the rest bytes */
+        blocknum = inodep->i_direct[i_direct_index];
+        dread(blocknum, buffer);
+        memcpy(buf, buffer, size);
+        read += size;
+    }
 
+    free(inodep);
+    free(buffer);
     return read;
 }
 
@@ -506,17 +517,10 @@ static int vfs_write(const char *path, const char *buf, size_t size,
     fprintf(stderr, "vfs_write called\n"); (void) fi;
     (void) fi;
 
-    char buffer[BLOCKSIZE];
-    int written;
+    int written = 0;
     int ino;
     inode_t *inodep;
-    int current_writing_block_index;        /* ****/
-    int in_block_offset;
-    int number_of_paddings;
-    int final_file_size;
-    int final_blocks_in_file; 
-    vcb_t *vcbp;
-
+    
     ino = find_ino(path);
     if (ino < 0)
         return -1;
@@ -526,87 +530,262 @@ static int vfs_write(const char *path, const char *buf, size_t size,
             free(inodep);
         return -1;
     }
-    written = 0;
 
-    final_file_size      = (int)(offset+size) > inodep->i_size ? 
-                            (int)offset+(int)size:
-                            inodep->i_size;
-    final_blocks_in_file = (ceil(final_file_size / BLOCKSIZE));
-    number_of_paddings   = offset - inodep->i_size;
-    if (number_of_paddings > 0){
-        /* current_writing_block_index is last block  or new block */
-        in_block_offset = inodep->i_size % BLOCKSIZE;
-        current_writing_block_index = (inodep->i_size % BLOCKSIZE == 0) ?
-                                        inodep->i_blocks : 
-                                        inodep->i_blocks - 1;
-    } else {
-        /* no paddings, offset is within the file data */
-        current_writing_block_index = offset / BLOCKSIZE;           /* current writing block index */
-        in_block_offset = offset % BLOCKSIZE;                       /* in_block_offset */
-        dread(inodep->i_direct[current_writing_block_index], buffer); /* prepare buffer to write to */
-    }
+    char *buffer = (char *) malloc(BLOCKSIZE);
 
+    int ori_size = inodep->i_size;
+    int trailings = offset - ori_size;
+    bool append_to_buffer = false;
+    bool has_trailings = (trailings > 0);
+    bool within_file = (offset < ori_size);
+    int buffer_offset = 0;
+    int i_direct_index = offset / BLOCKSIZE;
     int blocknum;
-    while (number_of_paddings > 0){
-        if (in_block_offset == BLOCKSIZE){
-            current_writing_block_index++;
-            in_block_offset = 0;
 
-            /* flush current buffer to disk */
-            dwrite(blocknum, buffer);
+    int final_size = (ori_size < ((int)offset + (int)size)) ? ((int)offset + (int)size) : ori_size;
+    int final_blocks = ceil(final_size / BLOCKSIZE);
 
-            /* assign a new data block to write to */
-            vcbp = retrieve_vcb();
-            blocknum = get_free_blocknum();
-            free_t freeb;
+    if (has_trailings)
+    {
+        within_file = false;
+        /* write trailings */
+        int trailing_start_offset = size % BLOCKSIZE;
+        if (trailing_start_offset == 0)    
+         /* all blocks full
+         allocate new blocks for trailings */
+        {
+            i_direct_index = inodep->i_blocks;
+            while(trailings >= BLOCKSIZE){
+                trailings -= BLOCKSIZE;
+                blocknum = get_free_blocknum();
+                if (blocknum < 0)
+                    return -ENOSPC;
+                inodep->i_direct[i_direct_index] = blocknum;
+                memset(buffer, 0, BLOCKSIZE);
+                if (dwrite(blocknum, buffer) < 0)
+                    return -1;
+                i_direct_index++;
+            }
+            if (trailings > 0){
+                /* last trailing block still to write */
+                blocknum = get_free_blocknum();
+                if (blocknum < 0)
+                    return -ENOSPC;
+                inodep->i_direct[i_direct_index] = blocknum;
+                memset(buffer, 0, trailings);
+                append_to_buffer = true;
+                buffer_offset = trailings;
+            }
         }
-        /* writing in last block */ 
-        if (current_writing_block_index == (inodep->i_blocks -1)){
-            if (dread(inodep->i_direct[current_writing_block_index], buffer)<0)
-                return written;
-            in_block_offset = inodep->i_size % BLOCKSIZE;           /* buffer, in_block_offset */
-        }
+        else
+        /* last block is not full, trailings starts there */ 
+        {
+            i_direct_index = inodep->i_blocks-1;
+            blocknum = inodep->i_direct[i_direct_index];
+            dread(blocknum, buffer);
+            int free_bytes_in_this_block = BLOCKSIZE - trailing_start_offset -1;
+            if (trailings > free_bytes_in_this_block){
+                memset(buffer+trailing_start_offset, 0, free_bytes_in_this_block);
+                dwrite(blocknum, buffer);
+                trailings -= free_bytes_in_this_block;
+                i_direct_index++;
 
-        /* writing to buffer */
-        buffer[in_block_offset] = '\0';
-    
-        in_block_offset++;
-        number_of_paddings--;
+                while(trailings >= BLOCKSIZE){
+                    trailings -= BLOCKSIZE;
+
+                    blocknum = get_free_blocknum();
+                    if (blocknum< 0)
+                        return -ENOSPC;
+                    inodep->i_direct[i_direct_index] = blocknum;
+                    memset(buffer, 0, BLOCKSIZE);
+                    if (dwrite(blocknum, buffer) < 0)
+                        return -1;
+                    i_direct_index++;
+                }
+                if (trailings > 0){
+                    /* still a little bit more trailing to write the last time */
+                    blocknum = get_free_blocknum();
+                    if (blocknum< 0)
+                        return -ENOSPC;
+                    inodep->i_direct[i_direct_index] = blocknum;
+                    memset(buffer, 0, trailings);
+                    append_to_buffer = true;
+                    buffer_offset = trailings;
+                }
+            }
+            else
+            /* writing offset is within the last block */ 
+            {
+                memset(buffer+trailing_start_offset, 0, trailings);
+                append_to_buffer = true;
+                buffer_offset = trailing_start_offset + trailings;
+            }
+        }
     }
-    /* writing real data */
-    while (size > 0){
-        if (in_block_offset == BLOCKSIZE){
-            in_block_offset = 0;
-            current_writing_block_index++;
-
-            /* flush buffer to disk */
+    /* write real data */
+    if (has_trailings && !within_file && append_to_buffer){
+        int remaining_bytes_in_buffer = BLOCKSIZE - buffer_offset - 1;
+        if ((int)size > remaining_bytes_in_buffer){
+            memcpy(buffer+buffer_offset, buf, remaining_bytes_in_buffer);
             dwrite(blocknum, buffer);
+            size -= remaining_bytes_in_buffer;
+            i_direct_index++;
+            written += remaining_bytes_in_buffer;
 
-            /* assign new block to continue writing */
-            vcbp = retrieve_vcb();
-            blocknum = vcbp->vb_free;
+            while ((int)size >= BLOCKSIZE){
+                size -= BLOCKSIZE;
+                blocknum = get_free_blocknum();
+                if (blocknum < 0)
+                    return -ENOSPC;
+                inodep->i_direct[i_direct_index] = blocknum;
+                if (dwrite(blocknum, (char *)(buf+written)) < 0)
+                    return -1;
+                i_direct_index++;
+                written += BLOCKSIZE;
+            }
+            if (size > 0){
+                /* still need to write a little bit more */
+                blocknum = get_free_blocknum();
+                if (blocknum < 0)
+                    return -ENOSPC;
+                inodep->i_direct[i_direct_index] = blocknum;
+                memcpy(buffer, buf+written, size);
+                if (dwrite(blocknum, buffer) < 0)
+                    return -1;
+                written += size;
+            }
+        } else {
+            memcpy(buffer+buffer_offset, buf, size);
+            if (dwrite(blocknum, buffer) < 0)
+                return -1;
+            written += size;
+        }
+    } else if ((has_trailings && !within_file && !append_to_buffer)
+        || (!has_trailings && !within_file) ){
+        while ((int)size >= BLOCKSIZE){
+            size -= BLOCKSIZE;
+
+            blocknum = get_free_blocknum();
             if (blocknum < 0)
                 return -ENOSPC;
-            free_t freeb;
-            read_struct(blocknum, &freeb);
-            vcbp->vb_free = freeb.f_next;
+            inodep->i_direct[i_direct_index] = blocknum;
+            if (dwrite(blocknum, (char *)(buf+written)) < 0)
+                return -1;
+            i_direct_index++;
+            written += BLOCKSIZE;
         }
+        if (size > 0){
+            /* still need to write a little bit more */
+            blocknum = get_free_blocknum();
+            if (blocknum < 0)
+                return -ENOSPC;
+            inodep->i_direct[i_direct_index] = blocknum;
+            /* zero-out buffer */
+            memset(buffer, 0, BLOCKSIZE);
+            memcpy(buffer, buf+written, size);
+            if (dwrite(blocknum, buffer) < 0)
+                return -1;
+            written += size;
+        }
+    } else if (!has_trailings && within_file){
+        bool within_block = ((offset % BLOCKSIZE) > 0);
+        if (within_block){
+            /* partially fill this block first */
+            blocknum = inodep->i_direct[i_direct_index];
+            dread(blocknum, buffer);
+            buffer_offset = offset % BLOCKSIZE;
+            int bytes_since_write_point = BLOCKSIZE - buffer_offset;
+            if ((int)size <= bytes_since_write_point){
+                memcpy(buffer+buffer_offset, buf, size);
+                dwrite(blocknum, buffer);
+                i_direct_index++;
+                written += size;
 
-        /* writing to buffer */
-        buffer[in_block_offset] = *buf;
+                inodep->i_size = final_size;
+                inodep->i_blocks = final_blocks;
+                if (write_struct(ino, inodep) < 0)
+                    return -1;
+                free(inodep);
+                free(buffer);
+                return written;
+            } else {
+                memcpy(buffer+buffer_offset, buf, bytes_since_write_point);
+                dwrite(blocknum, buffer);
+                i_direct_index++;
+                written += bytes_since_write_point;
+                size -= bytes_since_write_point;
+            }
+            while((int)size >= BLOCKSIZE){
+                size -= BLOCKSIZE;
+                if (i_direct_index <= (inodep->i_blocks -1)){
+                    blocknum = inodep->i_direct[i_direct_index];
+                } else {
+                    blocknum = get_free_blocknum();
+                    if (blocknum < 0)
+                        return -ENOSPC;
+                    inodep->i_direct[i_direct_index] = blocknum;
+                }
+                if (dwrite(blocknum, (char *)(buf+written)) < 0)
+                    return -1;
+                i_direct_index++;
+                written += BLOCKSIZE;
+            }
+            if (size > 0){
+                if (i_direct_index <= (inodep->i_blocks -1)){
+                    blocknum = inodep->i_direct[i_direct_index];
+                    dread(blocknum, buffer);
+                } else {
+                    blocknum = get_free_blocknum();
+                    if (blocknum < 0)
+                        return -ENOSPC;
+                    inodep->i_direct[i_direct_index] = blocknum;
+                }
+                memcpy(buffer, buf+written, size);
+                if (dwrite(blocknum, buffer) < 0)
+                    return -1;
+                written += size;
+            }
 
-        buf++;
-        written++;
-        in_block_offset++;
-        size--;
+        } else {
+            while((int)size >= BLOCKSIZE){
+                size -= BLOCKSIZE;
+                if (i_direct_index <= (inodep->i_blocks -1)){
+                    blocknum = inodep->i_direct[i_direct_index];
+                } else {
+                    blocknum = get_free_blocknum();
+                    if (blocknum < 0)
+                        return -ENOSPC;
+                    inodep->i_direct[i_direct_index] = blocknum;
+                }
+                if (dwrite(blocknum, (char *)(buf+written)) < 0)
+                    return -1;
+                i_direct_index++;
+                written += BLOCKSIZE;
+            }
+            if (size > 0){
+                if (i_direct_index <= (inodep->i_blocks -1)){
+                    blocknum = inodep->i_direct[i_direct_index];
+                    dread(blocknum, buffer);
+                } else {
+                    blocknum = get_free_blocknum();
+                    if (blocknum < 0)
+                        return -ENOSPC;
+                    inodep->i_direct[i_direct_index] = blocknum;
+                }
+                memcpy(buffer, buf+written, size);
+                if (dwrite(blocknum, buffer) < 0)
+                    return -1;
+                written += size;
+            }
+        }
     }
 
-    /* update inode */
-    inodep->i_size = final_file_size;
-    inodep->i_blocks = final_blocks_in_file;
-    write_struct(ino, inodep);
-    if (ino != 1)
-        free(inodep);
+    inodep->i_size = final_size;
+    inodep->i_blocks = final_blocks;
+    if (write_struct(ino, inodep) < 0)
+        return -1;
+    free(inodep);
+    free(buffer);
 
     return written;
 }
