@@ -537,7 +537,7 @@ static int vfs_write(const char *path, const char *buf, size_t size,
     int buffer_offset = 0;
     int i_direct_index = offset / BLOCKSIZE;
     int blocknum;
-    int current_blocks = inodep->i_blocks;
+    int current_blocks = ceil((double)inodep->i_size / BLOCKSIZE);
 
     int final_size = (ori_size < ((int)offset + (int)size)) ? ((int)offset + (int)size) : ori_size;
 
@@ -645,6 +645,8 @@ static int vfs_write(const char *path, const char *buf, size_t size,
             size -= BLOCKSIZE;
         } else {
             blocknum = get_data_blocknum(inodep, i_direct_index);
+            if (blocknum < 0)
+                return -1;
             if (dwrite(blocknum, (char*)buf+written)<0)
                 return -1;
             i_direct_index++;
