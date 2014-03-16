@@ -43,8 +43,6 @@ void myformat(int size) {
   if (format_disk(size) < 0)
     exit(EXIT_FAILURE);
   
-  print_vcb(); print_root(); // for debugging
-  
   // Do not touch or move this function
   dunconnect();
 }

@@ -122,7 +122,6 @@ static void vfs_unmount (void *private_data) {
  *
  */
 static int vfs_getattr(const char *path, struct stat *stbuf) {
-  fprintf(stdout, "readdir called\n");
   fprintf(stderr, "vfs_getattr called\n");
 
   int ino;
@@ -134,7 +133,6 @@ static int vfs_getattr(const char *path, struct stat *stbuf) {
   stbuf->st_blksize = BLOCKSIZE;
 
   /* 3600: YOU MUST UNCOMMENT BELOW AND IMPLEMENT THIS CORRECTLY */
-  // debug("       looking for path: %s", path);
   if (strcmp(path, "/") == 0 &&
       strcmp(path, "///") == 0){
     stbuf->st_mode  = (0777 & 0x0000ffff) | S_IFDIR;               /* is root */
@@ -142,7 +140,6 @@ static int vfs_getattr(const char *path, struct stat *stbuf) {
   }
   else {
     if ((ino = find_ino(path)) < 0){
-      debug("       file/dir not found");
       return -ENOENT;
     }
   }
@@ -193,7 +190,6 @@ static int vfs_mkdir(const char *path, mode_t mode)
 
     int child_ino = get_new_ino();
     if (child_ino < 0){
-        // err("disk full");
         return -ENOSPC;
     }
     int child_dirent_bnum = get_free_blocknum();
@@ -263,8 +259,6 @@ static int vfs_mkdir(const char *path, mode_t mode)
     if (parent_ino != 1)
         free(parent_inodep);
 
-    // fprintf(stdout, "mkdir() return\n");
-    // fprintf(stderr, "mkdir() return\n");
     return 0;
 } 
 
@@ -293,8 +287,6 @@ static int vfs_mkdir(const char *path, mode_t mode)
 static int vfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
                        off_t offset, struct fuse_file_info *fi)
 {
-    // fprintf(stdout, "readdir called\n");
-    // debug("vfs_readdir()");
     (void) fi;
 
     int     ino;
@@ -302,11 +294,9 @@ static int vfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
     entry_t *ep;
 
     if ( ( ino = find_ino(path) ) < 0 ) {
-        // debug("       inode not exist for path %s", path);
         return -1;
     }
     if ( !( dp = retrieve_inode(ino) ) ) {
-        // debug("       retrieve inode failed");
         return -1;
     }
     if (dp->i_type != S_IFDIR)
@@ -361,7 +351,6 @@ static int vfs_create(const char *path, mode_t mode, struct fuse_file_info *fi)
 
     int child_ino = get_new_ino();
     if (child_ino < 0){
-        // err("disk full");
         return -ENOSPC;
     }
     inode_t child_inode;
@@ -394,7 +383,6 @@ static int vfs_create(const char *path, mode_t mode, struct fuse_file_info *fi)
     } else {
         int parent_dirent_bnum = get_free_blocknum();
         if (parent_dirent_bnum < 0){
-            // err("Disk full");
             return -ENOSPC;
         }    
         clear_dirent(&parent_dirent);
@@ -411,10 +399,6 @@ static int vfs_create(const char *path, mode_t mode, struct fuse_file_info *fi)
     write_struct(parent_ino, parent_inodep);
     if (parent_ino != 1)
         free(parent_inodep);
-
-    
-    // fprintf(stdout, "create() return\n");
-    // fprintf(stderr, "create() return\n");
     return 0;
 }
 
