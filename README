@@ -56,8 +56,8 @@ Features: (design structures at the bottom)
 
 
 Test: 
-	we print debugging messages to stderr to provide debugging information. 
-	We also applied shell scripts and manually carrying out varies tests as more and as complicated as possible to ensure the reliability and robustness of the system. 
+	1. we print debugging messages to stderr to provide debugging information. 
+	2. We also applied shell scripts and manually carrying out varies tests as more and as complicated as possible to ensure the reliability and robustness of the system. 
 	Examples are: 
 	we created a shell script to 
 	* generate 
@@ -70,6 +70,7 @@ Test:
 	* calls rmdir and rm (-r)
 	* echo "xxxx" > files
 	* echo "xxxx" >> files
+	3. GDB helps a loooot
 
 
 
