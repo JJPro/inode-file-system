@@ -361,22 +361,22 @@ if (($atime == $mtime) && ($mtime == $ctime)) {
   endTest($FAIL, "Got times of $ctime/$atime/$mtime");
 }
 
-startTest("Very large write/read", 5);
-$res = writeFile($FILE4, $vlgdata);
-if (length($res) > 0) {
-  endTest($FAIL, $res);
-} else {
-  my $cmp = readFile($FILE4);
-  if ($cmp =~ m|^Error|) { 
-    endTest($FAIL, $cmp);
-  } elsif ($vlgdata eq $cmp) {
-    endTest($PASS, "");
-  } else {
-    endTest($FAIL, "Returned data did not match (wrote length " . length($vlgdata) . ", read length " . length($cmp) . ").  Actual data are in /tmp/.actual and /tmp/.expected");
-    open(F, "> /tmp/.actual"); print F $cmp; close(F);
-    open(F, "> /tmp/.expected"); print F $vlgdata; close(F);
-  }
-}
+# startTest("Very large write/read", 5);
+# $res = writeFile($FILE4, $vlgdata);
+# if (length($res) > 0) {
+#   endTest($FAIL, $res);
+# } else {
+#   my $cmp = readFile($FILE4);
+#   if ($cmp =~ m|^Error|) { 
+#     endTest($FAIL, $cmp);
+#   } elsif ($vlgdata eq $cmp) {
+#     endTest($PASS, "");
+#   } else {
+#     endTest($FAIL, "Returned data did not match (wrote length " . length($vlgdata) . ", read length " . length($cmp) . ").  Actual data are in /tmp/.actual and /tmp/.expected");
+#     open(F, "> /tmp/.actual"); print F $cmp; close(F);
+#     open(F, "> /tmp/.expected"); print F $vlgdata; close(F);
+#   }
+# }
 
 stopFS();
 unlink($DISK);
