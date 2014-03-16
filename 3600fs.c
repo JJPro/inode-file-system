@@ -737,6 +737,7 @@ static int vfs_delete(const char *path)
         vcbp->vb_free = tofree;
         if (write_struct(tofree, &free_st) < 0)
             return -1;
+        blocks--;
     }
 
     /* free file inode itself, set _ino field to 0, and mark as invalid in valid list */
