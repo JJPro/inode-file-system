@@ -306,29 +306,29 @@ if (0 == $size) {
   endTest($FAIL, "Incorrect size $size; truncated to 0");
 }
 
-# startTest("Large write/read", 5);
-# $res = writeFile($FILE4, $lgdata);
-# if (length($res) > 0) {
-#   endTest($FAIL, $res);
-# } else {
-#   my $cmp = readFile($FILE4);
-#   if ($cmp =~ m|^Error|) { 
-#     endTest($FAIL, $cmp);
-#   } elsif ($lgdata eq $cmp) {
-#     endTest($PASS, "");
-#   } else {
-#     endTest($FAIL, "Returned data did not match (wrote length " . length($lgdata) . ", read length " . length($cmp) . ")\nActual '$lgdata' read '$cmp'");
-#   }
-# }
+startTest("Large write/read", 5);
+$res = writeFile($FILE4, $lgdata);
+if (length($res) > 0) {
+  endTest($FAIL, $res);
+} else {
+  my $cmp = readFile($FILE4);
+  if ($cmp =~ m|^Error|) { 
+    endTest($FAIL, $cmp);
+  } elsif ($lgdata eq $cmp) {
+    endTest($PASS, "");
+  } else {
+    endTest($FAIL, "Returned data did not match (wrote length " . length($lgdata) . ", read length " . length($cmp) . ")\nActual '$lgdata' read '$cmp'");
+  }
+}
 
-# startTest("Truncate file to 1024", 5);
-# truncateFile($FILE4, 1024);
-# $size = -s $FILE4;
-# if (1024 == $size) {
-#   endTest($PASS, "");
-# } else {
-#   endTest($FAIL, "Incorrect size $size; truncated to 1024");
-# }
+startTest("Truncate file to 1024", 5);
+truncateFile($FILE4, 1024);
+$size = -s $FILE4;
+if (1024 == $size) {
+  endTest($PASS, "");
+} else {
+  endTest($FAIL, "Incorrect size $size; truncated to 1024");
+}
 
 startTest("Create long filename", 5);
 $res = writeFile($LONGFILE, "");
@@ -361,22 +361,22 @@ if (($atime == $mtime) && ($mtime == $ctime)) {
   endTest($FAIL, "Got times of $ctime/$atime/$mtime");
 }
 
-# startTest("Very large write/read", 5);
-# $res = writeFile($FILE4, $vlgdata);
-# if (length($res) > 0) {
-#   endTest($FAIL, $res);
-# } else {
-#   my $cmp = readFile($FILE4);
-#   if ($cmp =~ m|^Error|) { 
-#     endTest($FAIL, $cmp);
-#   } elsif ($vlgdata eq $cmp) {
-#     endTest($PASS, "");
-#   } else {
-#     endTest($FAIL, "Returned data did not match (wrote length " . length($vlgdata) . ", read length " . length($cmp) . ").  Actual data are in /tmp/.actual and /tmp/.expected");
-#     open(F, "> /tmp/.actual"); print F $cmp; close(F);
-#     open(F, "> /tmp/.expected"); print F $vlgdata; close(F);
-#   }
-# }
+startTest("Very large write/read", 5);
+$res = writeFile($FILE4, $vlgdata);
+if (length($res) > 0) {
+  endTest($FAIL, $res);
+} else {
+  my $cmp = readFile($FILE4);
+  if ($cmp =~ m|^Error|) { 
+    endTest($FAIL, $cmp);
+  } elsif ($vlgdata eq $cmp) {
+    endTest($PASS, "");
+  } else {
+    endTest($FAIL, "Returned data did not match (wrote length " . length($vlgdata) . ", read length " . length($cmp) . ").  Actual data are in /tmp/.actual and /tmp/.expected");
+    open(F, "> /tmp/.actual"); print F $cmp; close(F);
+    open(F, "> /tmp/.expected"); print F $vlgdata; close(F);
+  }
+}
 
 stopFS();
 unlink($DISK);
