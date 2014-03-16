@@ -194,9 +194,11 @@ static int vfs_mkdir(const char *path, mode_t mode)
     int child_ino = get_new_ino();
     if (child_ino < 0){
         // err("disk full");
-        return -1;
+        return -ENOSPC;
     }
     int child_dirent_bnum = get_free_blocknum();
+    if (child_dirent_bnum < 0)
+        return -ENOSPC;
     inode_t child_inode;
     clear_inode(&child_inode);
     child_inode.i_ino = child_ino;
@@ -218,6 +220,8 @@ static int vfs_mkdir(const char *path, mode_t mode)
     write_struct(vcbp->vb_valid, validp);
     
     int parent_ino = find_ino(parent);
+    if (parent_ino < 0)
+        return -ENOENT;
     dirent_t child_dirent;
     clear_dirent(&child_dirent);
     entry_t entry;
@@ -242,7 +246,7 @@ static int vfs_mkdir(const char *path, mode_t mode)
         int parent_dirent_bnum = get_free_blocknum();
         if (parent_dirent_bnum < 0){
             // err("Disk full");
-            return -1;
+            return -ENOSPC;
         }    
         clear_dirent(&parent_dirent);
         parent_dirent.d_entries[0] = entry;
@@ -344,9 +348,10 @@ static int vfs_create(const char *path, mode_t mode, struct fuse_file_info *fi)
     if (find_ino(path) > 0)
         return -EEXIST;                    /* file exists */
     
-    char         m_path [strlen(path)+1]; /* mutable path for dirname(), basename() */
-    char         parent[strlen(path)+1];   /* check */
-    char         child[strlen(path)+1];  /* check */
+    int len = strlen(path)+1;
+    char         m_path [len]; /* mutable path for dirname(), basename() */
+    char         parent[len];   /* check */
+    char         child[len];  /* check */
     strcpy(m_path, path); 
     strcpy(parent, dirname(m_path));                   /* dirname */
     strcpy(m_path, path);               /* reset m_path for next call */
@@ -357,7 +362,7 @@ static int vfs_create(const char *path, mode_t mode, struct fuse_file_info *fi)
     int child_ino = get_new_ino();
     if (child_ino < 0){
         // err("disk full");
-        return -1;
+        return -ENOSPC;
     }
     inode_t child_inode;
     clear_inode(&child_inode);
@@ -390,7 +395,7 @@ static int vfs_create(const char *path, mode_t mode, struct fuse_file_info *fi)
         int parent_dirent_bnum = get_free_blocknum();
         if (parent_dirent_bnum < 0){
             // err("Disk full");
-            return -1;
+            return -ENOSPC;
         }    
         clear_dirent(&parent_dirent);
         parent_dirent.d_entries[0] = entry;

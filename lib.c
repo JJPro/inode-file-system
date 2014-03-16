@@ -180,20 +180,6 @@ retrieve_dirent(int blocknum)
 	return direntp;
 }
 
-// entry_t *
-// fetch_entry(inode_t *dp, int offset)
-// {
-// 	static entry_t entry;
-// 	dirent_t *direntp;
-// 	int index = offset / 8;
-// 	int entry_offset = offset % 8;
-// 	direntp = retrieve_dirent(dp->i_direct[index]);
-// 	entry = direntp->d_entries[entry_offset];
-
-// 	free(direntp);
-// 	return &entry;
-// }
-
 inode_t *
 clear_inode(inode_t *dp)
 {
@@ -389,7 +375,8 @@ find_ino(const char *path)
 		if (!(inodep = retrieve_inode(ent.et_ino)))
 			return -1;
 		type = inodep->i_type;
-		free(inodep);
+		if (ent.et_ino != 1)
+			free(inodep);
 	}
 	if (i != (tokenc-1))
 		return -1;
