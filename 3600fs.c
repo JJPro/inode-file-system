@@ -594,6 +594,7 @@ static int vfs_write(const char *path, const char *buf, size_t size,
             if (dwrite(blocknum, buffer)<0)
                 return -1;
         }
+        return 0;
     }
     if (within_block){
         if (append_to_buffer){

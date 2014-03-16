@@ -388,7 +388,7 @@ add_data_block(inode_t *inodep, int blocknum)
 		}
 		/* add blocknum */
 		read_struct(single, &single_indrect);
-		single_indrect.index[(blocks - 106)%128] = blocknum;
+		single_indrect.index[(blocks - 107)%128] = blocknum;
 		if (write_struct(single, &single_indrect) < 0)
 			return -1;
 		inodep->i_blocks++;
@@ -398,9 +398,8 @@ add_data_block(inode_t *inodep, int blocknum)
 		int index_block_i;
 		indirect_t double_indirect;
 		indirect_t index_block;
-		int size_in_double = inodep->i_size - BLOCKSIZE * 106 - BLOCKSIZE * 128;
-		int double_block_off = size_in_double / (BLOCKSIZE * 128);
-		int index_block_off = size_in_double % (BLOCKSIZE * 128);;
+		int double_block_off = (blocks-236) / 129;
+		int index_block_off = blocks - 238 - 129 *(double_block_off-1);
 		if (blocks == 235){
 			/* add double indirect block */
 			double_block_i = get_free_blocknum();
@@ -421,7 +420,7 @@ add_data_block(inode_t *inodep, int blocknum)
 			if (write_struct(index_block_i, &index_block) < 0)
 				return -1;
 		} 
-		else if ((int)(ceil((double)inodep->i_size / BLOCKSIZE) - 106) % 128 == 0){
+		else if ((blocks-236)%129 == 0){
 			index_block_i = get_free_blocknum();
 			if (index_block_i < 0)
 				return -1;
