@@ -5,6 +5,7 @@
 #include <pwd.h>
 #include <grp.h>
 #include <sys/stat.h>  	/* S_IFREG, S_IFDIR */
+#include <math.h> 		/* ceil() */
 
 #include "disk.h" 				/* BLOCKSIZE */
 #include "lib.h"
@@ -383,66 +384,64 @@ add_data_block(inode_t *inodep, int blocknum)
 			inodep->i_blocks++;
 			inodep->i_single = single;
 			clear_indirect(&single_indrect);
+			write_struct(single, &single_indrect);
 		}
 		/* add blocknum */
 		read_struct(single, &single_indrect);
-		single_indrect.index[blocks +1] = blocknum;
+		single_indrect.index[(blocks - 106)%128] = blocknum;
 		if (write_struct(single, &single_indrect) < 0)
 			return -1;
 		inodep->i_blocks++;
 		return 0;
 	} else {
-		int double_i = inodep->i_double;
-		int inner_i;
+		int double_block_i = inodep->i_double;
+		int index_block_i;
 		indirect_t double_indirect;
-		indirect_t inner_indirect;
+		indirect_t index_block;
 		int size_in_double = inodep->i_size - BLOCKSIZE * 106 - BLOCKSIZE * 128;
-		int outter_off = size_in_double / (BLOCKSIZE * 128);
-		int inner_off = size_in_double % (BLOCKSIZE * 128);;
+		int double_block_off = size_in_double / (BLOCKSIZE * 128);
+		int index_block_off = size_in_double % (BLOCKSIZE * 128);;
 		if (blocks == 235){
 			/* add double indirect block */
-			double_i = get_free_blocknum();
-			if (double_i < 0)
+			double_block_i = get_free_blocknum();
+			if (double_block_i < 0)
 				return -1;
 			inodep->i_blocks++;
-			inodep->i_double = double_i;
+			inodep->i_double = double_block_i;
 			clear_indirect(&double_indirect);
-			inner_i = get_free_blocknum();
-			if (inner_i< 0)
+			index_block_i = get_free_blocknum();
+			if (index_block_i< 0)
 				return -1;
 			inodep->i_blocks++;
-			double_indirect.index[0] = inner_i;
-			clear_indirect(&inner_indirect);
-			inner_indirect.index[0] = blocknum;
+			double_indirect.index[0] = index_block_i;
+			clear_indirect(&index_block);
 			inodep->i_blocks++;
-			if (write_struct(double_i, &double_indirect) < 0)
+			if (write_struct(double_block_i, &double_indirect) < 0)
 				return -1;
-			if (write_struct(inner_i, &inner_indirect) < 0)
+			if (write_struct(index_block_i, &index_block) < 0)
 				return -1;
-			return 0;
 		} 
-		else if ((blocks - 236) % 128 == 0){
-			inner_i = get_free_blocknum();
-			if (inner_i < 0)
+		else if ((int)(ceil((double)inodep->i_size / BLOCKSIZE) - 106) % 128 == 0){
+			index_block_i = get_free_blocknum();
+			if (index_block_i < 0)
 				return -1;
-			read_struct(double_i, &double_indirect);
-			double_indirect.index[outter_off] = inner_i;
+			read_struct(double_block_i, &double_indirect);
+			double_indirect.index[double_block_off] = index_block_i;
 			inodep->i_blocks++;
-			clear_indirect(&inner_indirect);
-			if (write_struct(inner_i, &double_indirect) < 0)
+			clear_indirect(&index_block);
+			if (write_struct(double_block_i, &double_indirect) < 0)
 				return -1;
-			return 0;
+			if (write_struct(index_block_i, &index_block) < 0)
+				return -1;
 		} 
-		else {
-			read_struct(double_i, &double_indirect);
-			inner_i = double_indirect.index[outter_off];
-			read_struct(inner_i, &inner_indirect);
-			inner_indirect.index[inner_off] = blocknum;
-			if (write_struct(inner_i, &inner_indirect) < 0)
-				return -1;
-			inodep->i_blocks++;
-			return 0;	
-		}
+		read_struct(double_block_i, &double_indirect);
+		index_block_off = double_indirect.index[double_block_off];
+		read_struct(index_block_i, &index_block);
+		index_block.index[index_block_off] = blocknum;
+		if (write_struct(index_block_i, &index_block) < 0)
+			return -1;
+		inodep->i_blocks++;
+		return 0;
 	}
 }
 
