@@ -1,1 +1,0 @@
-run -s -d tmp

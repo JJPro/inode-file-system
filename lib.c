@@ -368,15 +368,14 @@ add_data_block(inode_t *inodep, int blocknum)
 		/* add this blocknum to the direct or indirects of the inodep 
 		Returns 0 on success, -1 on error */
 {
-	int blocks = inodep->i_blocks;
-	if (blocks < 106){
-		inodep->i_direct[blocks] = blocknum;
+	if (inodep->i_blocks < 106){
+		inodep->i_direct[inodep->i_blocks] = blocknum;
 		inodep->i_blocks++;
 		return 0;
-	} else if (blocks < 235) {
+	} else if (inodep->i_blocks < 235) {
 		int single = inodep->i_single;
 		indirect_t single_indrect;
-		if (blocks == 106){
+		if (inodep->i_blocks == 106){
 			/* add single indirect first */
 			single = get_free_blocknum();
 			if (single < 0)
@@ -388,7 +387,7 @@ add_data_block(inode_t *inodep, int blocknum)
 		}
 		/* add blocknum */
 		read_struct(single, &single_indrect);
-		single_indrect.index[(blocks - 107)%128] = blocknum;
+		single_indrect.index[(inodep->i_blocks - 107)%128] = blocknum;
 		if (write_struct(single, &single_indrect) < 0)
 			return -1;
 		inodep->i_blocks++;
@@ -398,9 +397,8 @@ add_data_block(inode_t *inodep, int blocknum)
 		int index_block_i;
 		indirect_t double_indirect;
 		indirect_t index_block;
-		int double_block_off = (blocks-236) / 129;
-		int index_block_off = blocks - 238 - 129 *(double_block_off-1);
-		if (blocks == 235){
+		int double_block_off = (inodep->i_blocks-236) / 129;
+		if (inodep->i_blocks == 235){
 			/* add double indirect block */
 			double_block_i = get_free_blocknum();
 			if (double_block_i < 0)
@@ -420,7 +418,7 @@ add_data_block(inode_t *inodep, int blocknum)
 			if (write_struct(index_block_i, &index_block) < 0)
 				return -1;
 		} 
-		else if ((blocks-236)%129 == 0){
+		else if ((inodep->i_blocks-236)%129 == 0){
 			index_block_i = get_free_blocknum();
 			if (index_block_i < 0)
 				return -1;
@@ -433,8 +431,9 @@ add_data_block(inode_t *inodep, int blocknum)
 			if (write_struct(index_block_i, &index_block) < 0)
 				return -1;
 		} 
+		int index_block_off = inodep->i_blocks - 238 - 129 * double_block_off;
 		read_struct(double_block_i, &double_indirect);
-		index_block_off = double_indirect.index[double_block_off];
+		index_block_i = double_indirect.index[double_block_off];
 		read_struct(index_block_i, &index_block);
 		index_block.index[index_block_off] = blocknum;
 		if (write_struct(index_block_i, &index_block) < 0)
