@@ -16,7 +16,7 @@ squeaky: clean
 	rm -f MYDISK
 
 mk:
-	./3600mkfs 100000
+	./3600mkfs 1000000
 
 run:
 	./3600fs -s -d tmp
