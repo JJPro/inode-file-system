@@ -4,59 +4,61 @@ Blakely Madden
 
 #### Implementation Pattern : I-node
 
-# Bug: 
+###### Bug: 
 Fails on very large write and read part in the test script. 
 Grader has to turn off that test, otherwise the program crashes and the tests after that are not actually tested. 
 
 
-# Features: (design structures at the bottom)
-## 1. supports at most 200 files and directories, 
+###### Features: (design structures at the bottom)
+1. supports at most 200 files and directories, 
 However, it can be easily adjusted by changing the constant I_TABLE_SIZE, along with JUNK_SIZE in lib.h.
 Make sure I_TABLE_SIZE + JUNK_SIZE = 512, while changing those constants.
-## 2. supports a maximum of directory depth of 10 level, 
+2. supports a maximum of directory depth of 10 level, 
 However, it can be easily adjusted by changing the constant MAX_DIR_DEPTH in lib.h
-## 3. supports file name of maximum length of 60.
+3. supports file name of maximum length of 60.
 This is not adjustable due to constraints from structures definitions
 
-## 4. Caching: 
+4. Caching: 
 we cached vcb, root inode and i-node valid table(struct valid_t) from the mount of the drive, and saves it back on unmount. 
 Within the running of the system, those three blocks are only written to disk when they are changed. 
 When you do a read on them, the data actually comes from the local cache, so to reduce disk accesses. 
 
-## 5. detects whether last umount was successful: 
+5. detects whether last umount was successful: 
 we set the clean bit in vcb to false on mount, and restore it to true when the disk is umounted. 
 So if the disk is unpluged accidently without calling umount, the next mount will notice from the vcb block. 
 
-## 6. We defined Macros, instead of functions, to detect file types.
+6. We defined Macros, instead of functions, to detect file types.
 
-## 7. I-node: 
+7. I-node: 
 we eventually decided to drop the dnode structure, since it is generally the same as file inode. 
 Instead we add a type field into inode struct. 
 This avoids defining two sets of facilitate functions for them, which only makes the design more complex.
 
-## 8. Valid inode table: 
+8. Valid inode table: 
 We use the block right after the I-node table to store the validation information of each inode, and cached it the RAM. 
 So that we don't have to go through all the inode blocks to find an available one when new inode is required. 
 This features saves disk read access. 
 
-## 9. The insert_t type: 
+9. The insert_t type: 
 The insert_t is one value but contains two information, blocknum and offset. 
 insert_t is typedef[ed] from type long int. 
+```
 	typedef long insert_t;
+```
 The last 3 bits of it contains the offset value. (offset is the offset of an dirent block, each dirent block contains 8 entires, thus it requires 3 bits to store the information)
 The rest bits contains the block number. 
 We use macros to pull off data from insert_t and combine values into insert_t. 
 
 MACROs for insert_t are as follows: 
-'''
+```c
 #define I_BLOCK(x)  	( (int) ( (x) >> 3 ) )			/* insert entry block */
 #define I_OFFSET(x) 	( (int) ( (x) & (long)7 ) )		/* insert entry offset */
 #define I_INSERT(x, y)	(insert_t)( ( (long)(x) << 3 ) + (y) )	
 												/* generate insert value */
-'''
+```
 
 
-# Test: 
+#### Test: 
 1. we print debugging messages to stderr to provide debugging information. 
 2. We also applied shell scripts and manually carrying out varies tests as more and as complicated as possible to ensure the reliability and robustness of the system. 
 Examples are: 
@@ -75,7 +77,7 @@ we created a shell script to
 
 
 
-# Difficulties and Resolutions: 
+#### Difficulties and Resolutions: 
 1. The inode FS is really not easy to archieve, there are too many pieces/modules have to be taken care of simutaneously. 
 For each function writing, we draw complicated diagram to assist us keep track of the connections and dependences among each piece, and what part of a piece/module relies on the complition of the other(s).
 
@@ -91,7 +93,7 @@ It took us a whole day debugging to discover this issue. We even rewrote a coupl
 
 
 
-# Overall Structure: 
+#### Overall Structure: 
 |vcb|-----I-node table------|valid|-------dirent/data--------|
 
 + vcb			: one block in size. 
@@ -104,7 +106,7 @@ It took us a whole day debugging to discover this issue. We even rewrote a coupl
 
 
 
-# Variables and Structures: 
+#### Variables and Structures: 
 	#define MAGIC 8876318
 	#define I_TABLE_SIZE 200
 
