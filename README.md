@@ -4,12 +4,12 @@ Blakely Madden
 
 #### Implementation Pattern : I-node
 
-###### Bug: 
+#### Bug: 
 Fails on very large write and read part in the test script. 
 Grader has to turn off that test, otherwise the program crashes and the tests after that are not actually tested. 
 
 
-###### Features: (design structures at the bottom)
+#### Features: (design structures at the bottom)
 1. supports at most 200 files and directories, 
 However, it can be easily adjusted by changing the constant I_TABLE_SIZE, along with JUNK_SIZE in lib.h.
 Make sure I_TABLE_SIZE + JUNK_SIZE = 512, while changing those constants.
