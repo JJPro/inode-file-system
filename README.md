@@ -2,7 +2,7 @@ Team Victory:
 Lu Ji
 Blakely Madden
 
-###### Implementation Pattern : I-node
+##### Implementation Pattern : I-node
 
 # Bug: 
 Fails on very large write and read part in the test script. 
@@ -48,11 +48,12 @@ The rest bits contains the block number.
 We use macros to pull off data from insert_t and combine values into insert_t. 
 
 MACROs for insert_t are as follows: 
-	#define I_BLOCK(x)  	( (int) ( (x) >> 3 ) )			/* insert entry block */
-	#define I_OFFSET(x) 	( (int) ( (x) & (long)7 ) )		/* insert entry offset */
-	#define I_INSERT(x, y)	(insert_t)( ( (long)(x) << 3 ) + (y) )	
-													/* generate insert value */
-
+'''c
+#define I_BLOCK(x)  	( (int) ( (x) >> 3 ) )			/* insert entry block */
+#define I_OFFSET(x) 	( (int) ( (x) & (long)7 ) )		/* insert entry offset */
+#define I_INSERT(x, y)	(insert_t)( ( (long)(x) << 3 ) + (y) )	
+												/* generate insert value */
+'''
 
 
 # Test: 
