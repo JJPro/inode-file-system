@@ -11,3 +11,7 @@ headers
 text
 core
 tmp
+*actual
+*expected
+break
+text
