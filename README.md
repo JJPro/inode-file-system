@@ -93,12 +93,12 @@ It took us a whole day debugging to discover this issue. We even rewrote a coupl
 # Overall Structure: 
 |vcb|-----I-node table------|valid|-------dirent/data--------|
 
-vcb			: one block in size. 
-I-node table: 200 blocks. 
++ vcb			: one block in size. 
++ I-node table: 200 blocks. 
 			  contains 200 inodes, each one taking exactly one block. But the table size of adjustable as noted in Feature 1.
-valid 		: 1 block. 
++ valid 		: 1 block. 
 			  keeps track of validation information of each inode. 
-dirent/data : the rest of the disk
++ dirent/data : the rest of the disk
 
 
 
